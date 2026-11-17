@@ -4,6 +4,8 @@ Revised November 17, 2026 · First draft November 16, 2026
 
 Arthegall is a cross-platform control plane for agents. The user gives an assignment to a particular agent they know, follows the work when it interests them, and hears back when there is something to read or decide. The agent manages the providers and threads it uses to carry out the assignment.
 
+The [technical architecture and milestones](architecture.md) describe the first release's runtime, persistence, provider integration, recovery, and delivery checkpoints.
+
 ## Agents and assignments
 
 An **agent** has a persistent identity and an explicit definition. The definition describes its role, instructions, and authority. The same agent can own several assignments, work on several authorized machines, and take part in several conversations. Its identity survives a change of provider or the end of a provider session.
