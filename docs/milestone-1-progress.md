@@ -1,45 +1,51 @@
 # Milestone 1 implementation evidence
 
-Development checkpoint · November 17, 2026
+Implementation and local acceptance · November 17, 2026
 
-The reviewed plan is committed. Implementation now includes the TypeScript workspace, shared Zod contracts, separate server and runner SQLite stores, a Fastify API, authenticated WebSocket delivery, the Codex stdio adapter, a runner-managed MCP service, and the React conversation interface. The local setup command and foreground process commands provide a runnable development installation.
+The reviewed plan is committed as `395b54a`; the reviewed initial implementation is committed as `185d316`. The application includes separate server and runner SQLite stores, authenticated HTTP and WebSocket delivery, the Codex stdio adapter, a runner-managed MCP service, and a React conversation interface.
 
-This is an implementation checkpoint, not milestone completion or release acceptance.
+Milestone 1 now includes a macOS release packager and user-service installer. Local acceptance covers the real administrator conversation, native approvals, refresh/restart recovery, and an HTTPS reverse proxy. Deployment on another device remains unverified because no private-network endpoint is configured. Remote CI results are recorded separately below; local checks do not establish other-platform enforcement.
 
-## Verified locally
+## Verification
 
 | Check | Evidence and scope |
 | --- | --- |
-| Build and types | Strict TypeScript compilation and production Vite build on Node 26.13.1. Dependencies pinned in the lockfile. |
-| Backend tests | Thirteen automated tests cover RPC failures and timeouts, MCP identity and revocation, environment filtering, SQLite reopen and deduplication, pairing limits, queued context ordering, approval decisions, HTTP origins, event cursor handoff, and server disconnection during runner execution. |
-| Real browser, deterministic provider | Chromium pairing and invalid-code feedback, messaging, refresh, simulated approval rejection, offline runner queueing, server reconnect with draft preservation, desktop and narrow layouts, navigation focus, and browser revocation. Server and runner are separate child processes. Screenshots were visually inspected. |
-| Real browser, real Codex | Two synthetic messages through the browser, server, and runner. Restarting both application processes preserved the conversation; the second turn recalled the synthetic phrase. The runner database recorded the same provider thread and actual model/effort for both turns. |
-| Provider probe | Nine live checks against Codex CLI 0.167.0-alpha.4.1 using the advertised default configuration, `gpt-6.2-sol` with low effort. These checks are separate from deterministic-provider tests. |
+| Build and types | Strict TypeScript compilation and production Vite build using Node 26.13.1 and npm 11.20.0. |
+| Backend tests | Nineteen automated tests cover RPC failures/timeouts, MCP identity and revocation, environment filtering, persistence and deduplication, pairing limits, queued context ordering, approval decisions during streamed commentary, HTTP origins, event cursor handoff, server disconnection during execution, process ownership, and five application recovery boundaries. |
+| Browser, deterministic provider | Chromium pairing and invalid-code feedback, messaging, refresh, simulated approval rejection, offline queueing, reconnect with draft preservation, desktop and narrow layouts, keyboard navigation, and browser revocation. Server and runner are separate processes. |
+| Browser, real Codex | Conversation continuity after restarting both processes; approved synthetic write and rejected write with filesystem assertions; pending-approval refresh; active streamed-response refresh with one final message. Exercise threads never replace the ordinary administrator thread. |
+| Packaged installation | Official checksum-verified Node runtime and native SQLite binding bundled with production dependencies. Isolated macOS launchd installation, live browser conversation, stop/start, repeated setup and installation, restart/status, and duplicate-process exclusion. |
+| HTTPS proxy | Ephemeral certificate trusted explicitly by the runner and pinned in Chromium. Pairing, Secure/HttpOnly/SameSite cookies, browser WSS, runner WSS, messages, and refresh through a separate TLS proxy. This is a local test, not a second-device deployment. |
+| Provider probe | Nine live checks against Codex CLI 0.167.0-alpha.4.1, using the advertised default `gpt-6.2-sol` with low effort. Covers restricted reads, MCP identity, explicit outcomes, thread resume/history, approve/reject, interruption, and provider exit. |
+| Cross-platform CI | macOS/Linux/Windows workflow is configured; remote execution remains to be recorded. |
 
-The nine provider checks cover a permitted workspace read and denied sibling-storage read; rejected identity forgery and invalid MCP credentials; streamed output with an explicit MCP outcome before turn completion; saved-thread resume; completed-turn history inspection; approved and rejected synthetic writes; interruption during a pending approval; and forced process exit followed by inspection of the interrupted turn.
+Live model tests are opt-in. Synthetic JSON-RPC provider tests exercise the real server, runner, MCP service, and process boundaries without a model call. They do not claim to simulate every provider failure.
 
-Probe transcripts, generated provider schemas, local credentials, account information, private machine paths, and real usage data are not repository fixtures. The probe prints bounded check summaries. Public examples use synthetic content.
+## Permission boundaries and approvals
 
-## Permission and recovery findings
+Each provider process gets a fresh named permission profile. It permits minimal platform reads and assignment-workspace reads, with command network access disabled. Ordinary administrator threads disable native shell, image viewing, browser/computer tools, connectors, plugins, hooks, and provider memory. Inherited MCP servers are explicitly disabled rather than relying on an empty merged map.
 
-The installed provider supports named permission profiles. The implementation creates a fresh profile name per provider process to avoid merging with an unrelated user-defined profile. It grants minimal platform reads and read access to the assignment workspace, with command network access disabled. Bootstrap threads disable native shell, image viewing, browser/computer tools, connectors, plugins, hooks, and provider memory. Inherited MCP servers are explicitly disabled; an empty map alone would merge with existing configuration.
+MCP credentials bind to one immutable execution context and are revoked at the end of its run. Identity cannot be supplied in tool arguments. An explicit outcome is saved before acknowledging its tool call; it becomes final only after provider completion. A provider exit alone is not success.
 
-MCP credentials bind to an immutable execution context and expire or are revoked when the run ends. Tool arguments cannot supply a replacement identity. The runner records the explicit outcome before acknowledging the tool call and waits for provider completion before publishing the final result. A provider exit alone never marks a run successful.
+The foreground runner's optional `--approval-exercise` flag enables the exact `/test native approval` message. Only that run gets a separate synthetic provider thread with shell enabled. The runner accepts at most one approval request and validates its method, thread, turn, workspace, non-login shell wrapper, and exact synthetic write command. The browser decision is for that one request. Any alternative native request is denied. Installed services never enable this flag, and the bootstrap grant remains unchanged. The activity history records the exercise and the exact command.
 
-The restricted command test read a synthetic workspace note and failed to read a synthetic secret in a sibling directory. This demonstrates that command boundary on the tested macOS build; it does not establish equivalent enforcement on other operating systems or all future Codex versions. The provider exposes separate configuration controls for capabilities outside command execution. [Codex permissions](https://learn.chatgpt.com/docs/permissions)
+The permission probe demonstrates the tested command boundary on macOS, not equivalent enforcement on other platforms or future provider builds. The provider separately controls capabilities outside command execution. [Codex permissions](https://learn.chatgpt.com/docs/permissions)
 
-The approval probe checks the exact synthetic command, its workspace, and its thread before approving. Codex reports a shell-wrapped command, so the probe verifies that wrapper as well. Login shell loading is disabled. The bootstrap administrator does not inherit the probe's shell permission.
+## Recovery behavior
 
-A forced exit while awaiting approval left an inspectable interrupted turn. The runner reconciles a saved completed turn with a durable explicit outcome; missing or ambiguous evidence becomes blocked. A crash between submitting a provider request and persisting its response remains an uncertainty boundary. No automatic replay is attempted there. The documented lifecycle APIs support the history inspection used by this implementation. [Codex app-server](https://learn.chatgpt.com/docs/app-server)
+- A dispatch saved locally before provider startup remains queued if sign-in is needed or the runner dies before starting work.
+- Authentication failure during a started turn becomes blocked and shows sign-in needed. Started work is never silently requeued.
+- A crash after requesting a turn but before saving its response is uncertain and becomes blocked without replay.
+- A durable explicit outcome plus a saved turn that provider history identifies as completed can be reconciled after restart.
+- A partial response or pending approval without sufficient completion evidence becomes blocked. Late approval decisions cannot grant a later run.
+- An exclusive OS-backed SQLite process lock prevents simultaneous foreground/service processes from owning the same server or runner data directory; process exit releases the lock.
 
-The browser's native-approval round trip is not yet connected to real Codex requests: the browser test exercises a deterministic approval, while the provider probe exercises actual native approval separately. Unexpected native requests from the bootstrap administrator are denied.
+The lifecycle API supplies the thread history used for reconciliation. [Codex app-server](https://learn.chatgpt.com/docs/app-server)
 
-## Remaining milestone work
+## Installation and remaining acceptance
 
-- Connect a narrowly authorized real-provider approval exercise through the browser and runner, preserving the default bootstrap grant.
-- Add the macOS user-service installer and start/stop/status commands, package the pinned runtime and native dependencies, and verify the packaged installation.
-- Complete the application-level failure matrix for provider authentication expiry, abrupt runner termination at dispatch boundaries, and browser refresh during an active real-provider stream. Existing probe and persistence tests cover portions of these scenarios separately.
-- Verify a private-network HTTPS reverse-proxy deployment. Loopback access has been exercised locally.
-- Run the new CI matrix on Linux and Windows. Its configuration is present; remote CI results are not yet available.
+See [macOS installation](macos-installation.md) for packaging, services, diagnostics, and private-network HTTPS configuration. The default listener remains loopback-only.
 
-The broader channel, assignment-creation, reporting, scheduling, backup, retention, and update work remains in the later milestones and release verification described by the architecture.
+A real private-network endpoint and second-device check remain open. Linux/Windows CI results are not yet recorded. Additional platform installers, agent creation, channels, reporting, scheduling, backup, retention, and updating belong to later milestones or release verification.
+
+Provider transcripts, generated schemas, local databases, service logs, credentials, account details, private paths, and real usage samples remain outside public artifacts. Tests and documentation use synthetic content.

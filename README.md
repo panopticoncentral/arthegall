@@ -2,7 +2,7 @@
 
 A control plane for persistent agents and assignments, with conversations at the center and provider sessions managed by runners.
 
-The first implementation supports a local browser conversation with the administrator through a separate server and Codex runner. This is a development checkpoint within milestone 1; the packaged installer and remaining acceptance work are still in progress. See the [design](docs/design.md), [architecture](docs/architecture.md), [reviewed plan](docs/milestone-1-plan.md), and [implementation evidence](docs/milestone-1-progress.md).
+The first implementation supports a local browser conversation with the administrator through a separate server and Codex runner. Milestone 1 includes a macOS package and user-service installer, with local conversation, approval, recovery, and HTTPS proxy acceptance checks. Second-device deployment remains unverified. See [macOS installation](docs/macos-installation.md) for packaging and service operation. See the [design](docs/design.md), [architecture](docs/architecture.md), [reviewed plan](docs/milestone-1-plan.md), and [implementation evidence](docs/milestone-1-progress.md).
 
 ## Run locally
 
@@ -48,13 +48,13 @@ npm run probe:codex
 ARTHEGALL_LIVE_CODEX=1 npm exec playwright test -- --grep 'live Codex'
 ```
 
-The native probe is currently macOS-specific. It validates permission boundaries, thread resume, MCP identity, approvals for exact synthetic file writes, interruption, and provider-exit recovery. The browser live check validates the administrator conversation through both application processes. Avoid running two Playwright commands against the same output directory at once; use `--output` to separate their artifacts.
+The native probe is currently macOS-specific. It validates permission boundaries, thread resume, MCP identity, approvals for exact synthetic file writes, interruption, and provider-exit recovery. The browser live check validates conversation continuity, real approve/reject decisions, and active-stream refresh through both application processes. Avoid running two Playwright commands against the same output directory at once; use `--output` to separate their artifacts.
 
 For UI development without model calls, run `npm run runner -- --fake` against a separate test data directory. This provider labels its results as synthetic. The `/test approval` message exercises its simulated approval workflow; it performs no file operation.
 
 ## Private-network HTTPS
 
-The default listener binds only to loopback. For another device, put a trusted HTTPS reverse proxy in front of the loopback listener and set `ARTHEGALL_ORIGIN` to its HTTPS origin at initial setup. The proxy must preserve that public Host header and support WebSocket upgrades for `/events` and `/runner`. The application does not trust forwarded headers or enable CORS. Browser cookies become Secure for HTTPS origins. The runner must also be able to reach and trust that endpoint. Remote proxy deployment has not yet been acceptance-tested.
+The default listener binds only to loopback. For another device, put a trusted HTTPS reverse proxy in front of the loopback listener and set `ARTHEGALL_ORIGIN` to its HTTPS origin at initial setup. The proxy must preserve that public Host header and support WebSocket upgrades for `/events` and `/runner`. The application does not trust forwarded headers or enable CORS. Browser cookies become Secure for HTTPS origins. The runner must also be able to reach and trust that endpoint. A separate local HTTPS proxy has passed browser and runner acceptance; deployment to another device has not yet been tested.
 
 ## Public repository data
 

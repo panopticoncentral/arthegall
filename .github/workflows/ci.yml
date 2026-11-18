@@ -17,6 +17,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run typecheck
       - run: npm test
       - if: runner.os == 'Linux'
         run: npm exec playwright install -- --with-deps chromium

@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 test('live Codex administrator retains context after runner and server restart', async ({ page }) => {
   test.skip(process.env.ARTHEGALL_LIVE_CODEX !== '1', 'Explicit opt-in required for model calls');
-  test.setTimeout(180_000);
+  test.setTimeout(360_000);
   const root = mkdtempSync(join(tmpdir(), 'arthegall-live-test-'));
   const port = 50_000 + Math.floor(Math.random() * 8_000), origin = `http://127.0.0.1:${port}`;
   const env = { ...process.env, ARTHEGALL_DATA_DIR: root, ARTHEGALL_PORT: String(port) };
@@ -15,7 +15,7 @@ test('live Codex administrator retains context after runner and server restart',
   const setup = execFileSync(process.execPath, [cli, 'setup'], { env, encoding: 'utf8' });
   const code = setup.match(/minutes\): (\S+)/)?.[1];
   if (!code) throw new Error('Pairing code missing');
-  const launch = (command: string) => spawn(process.execPath, [cli, command], { env, stdio: 'ignore' });
+  const launch = (command: string) => spawn(process.execPath, [cli, command, ...(command === 'runner' ? ['--approval-exercise'] : [])], { env, stdio: 'ignore' });
   const stop = async (child: ChildProcess) => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const closed = new Promise<void>((resolve) => child.once('close', resolve));
@@ -47,6 +47,34 @@ test('live Codex administrator retains context after runner and server restart',
       const rows = db.prepare('SELECT model,effort,thread_id FROM executions ORDER BY rowid').all() as { model: string; effort: string; thread_id: string }[];
       expect(rows[0]?.thread_id).toBe(rows[1]?.thread_id);
       expect(rows.every((row) => row.model && row.effort)).toBe(true);
+      for (const decision of ['Approve once', 'Decline']) {
+        await composer.fill('/test native approval');
+        await composer.press('Enter');
+        await expect(page.getByRole('heading', { name: 'Approval needed' })).toBeVisible({ timeout: 90_000 });
+        const run = db.prepare('SELECT run_id,payload,thread_id FROM executions ORDER BY rowid DESC LIMIT 1').get() as { run_id: string; payload: string; thread_id: string };
+        expect(run.thread_id).not.toBe(rows[0]?.thread_id);
+        const assignmentId = JSON.parse(run.payload).context.assignmentId as string;
+        const filename = join(root, 'workspaces', assignmentId, `approval-note-${run.run_id}.txt`);
+        expect(existsSync(filename)).toBe(false);
+        // The provider remains active across refresh; the exact pending request is restored.
+        await page.reload();
+        await expect(page.getByRole('heading', { name: 'Approval needed' })).toBeVisible();
+        await page.getByRole('button', { name: decision, exact: true }).click();
+        await expect.poll(() => (db.prepare('SELECT state FROM executions WHERE run_id=?').get(run.run_id) as { state: string }).state, { timeout: 90_000 }).toBe('done');
+        await expect(page.getByRole('heading', { name: 'Approval needed' })).toHaveCount(0);
+        if (decision === 'Approve once') expect(readFileSync(filename, 'utf8')).toBe('synthetic');
+        else expect(existsSync(filename)).toBe(false);
+        expect((db.prepare('SELECT thread_id FROM sessions WHERE assignment_id=?').get(assignmentId) as { thread_id: string }).thread_id).toBe(rows[0]?.thread_id);
+      }
+      await composer.fill('Write a numbered list of 150 invented two-word garden names. Then report the entire list as the completed outcome.');
+      await composer.press('Enter');
+      await expect(page.locator('.message-state').filter({ hasText: 'Responding' })).toBeVisible({ timeout: 90_000 });
+      const active = db.prepare('SELECT run_id,text FROM executions ORDER BY rowid DESC LIMIT 1').get() as { run_id: string; text: string };
+      expect(active.text.length).toBeGreaterThan(0);
+      await page.reload();
+      await expect.poll(() => (db.prepare('SELECT state FROM executions WHERE run_id=?').get(active.run_id) as { state: string }).state, { timeout: 90_000 }).toBe('done');
+      await expect(page.locator('.message')).toHaveCount(10);
+      await expect(page.locator('.message-state').filter({ hasText: 'Responding' })).toHaveCount(0);
     } finally { db.close(); }
   } finally { await stop(runner); await stop(server); rmSync(root, { recursive: true, force: true }); }
 });

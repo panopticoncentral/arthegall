@@ -12,3 +12,6 @@ test-results/
 *.db
 *.db-*
 .arthegall/
+
+release/
+test-results-*/

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
@@ -9,9 +9,10 @@ import { launchArgs, providerEnvironment, threadConfig } from './codex/config.js
 import { startToolService } from './mcp.js';
 import { RunnerStore } from './store.js';
 
-export type RunnerOptions = { runnerId: string; token: string; serverUrl: string; workspaceRoot: string; codex?: string; fake?: boolean };
-const Turn = z.object({ threadId: z.string(), turn: z.object({ id: z.string(), status: z.string() }) });
+export type RunnerOptions = { runnerId: string; token: string; serverUrl: string; workspaceRoot: string; codex?: string; fake?: boolean; approvalExercise?: boolean; rpcFactory?: (workspace: string, profile: string) => CodexRpc };
+const Turn = z.object({ threadId: z.string(), turn: z.object({ id: z.string(), status: z.string(), error: z.object({ message: z.string() }).nullable().optional() }) });
 class SignInNeeded extends Error {}
+const authenticationFailure = (error: unknown) => error instanceof Error && /(?:\b401\b|unauthori[sz]ed|authentication|token.{0,40}expired|sign.?in|log.?in)/i.test(error.message);
 
 export async function startRunner(store: RunnerStore, options: RunnerOptions) {
   const service = await startToolService();
@@ -61,7 +62,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
   };
   async function provider(workspace: string) {
     const permissionProfile = `arthegall_${randomUUID()}`;
-    rpc = new CodexRpc(options.codex ?? 'codex', launchArgs(permissionProfile), workspace, providerEnvironment(process.env));
+    rpc = options.rpcFactory?.(workspace, permissionProfile) ?? new CodexRpc(options.codex ?? 'codex', launchArgs(permissionProfile), workspace, providerEnvironment(process.env));
     await rpc.initialize();
     const account = z.object({ account: z.unknown().nullable() }).parse(await rpc.request('account/read', { refreshToken: false }));
     if (account.account === null) throw new SignInNeeded();
@@ -89,8 +90,9 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
   }
   async function execute(dispatch: Dispatch) {
     const { context } = dispatch;
-    const workspace = join(options.workspaceRoot, context.assignmentId);
-    mkdirSync(workspace, { recursive: true, mode: 0o700 });
+    const directory = join(options.workspaceRoot, context.assignmentId);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const workspace = realpathSync(directory);
     if (options.fake) {
       setStatus('ready');
       store.start(context.runId);
@@ -115,17 +117,24 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
       const connection = await provider(workspace);
       setStatus('ready');
       store.start(context.runId); // Persist before any request that could start work.
+      const exercise = options.approvalExercise && context.messages.at(-1)?.text === '/test native approval';
+      const command = `printf 'synthetic' > approval-note-${context.runId}.txt`;
+      const approvalPolicy = exercise ? 'on-request' : 'never';
+      const instructions = exercise
+        ? `This is an explicitly enabled synthetic approval exercise. Use the shell tool with login=false to run exactly: ${command}. Request approval for the write. Do not try any other command, tool, or alternative operation after denial. Then report_outcome with a concise description of whether the write succeeded or was declined.`
+        : `${context.instructions}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`;
+      if (exercise) store.publish(context.runId, { kind: 'activity', message: `Operator enabled a one-run synthetic approval exercise: ${command}. Scope: this assignment workspace; each native request requires an exact browser decision.` });
       const binding = service.bind(context, async (outcome) => { store.stageOutcome(context.runId, outcome); });
       revoke = binding.revoke;
       const params = {
-        cwd: workspace, runtimeWorkspaceRoots: [workspace], permissions: connection.permissionProfile, approvalPolicy: 'never', approvalsReviewer: 'user',
-        model: connection.model.model, config: threadConfig(connection.inherited, service.url, binding.token),
+        cwd: workspace, runtimeWorkspaceRoots: [workspace], permissions: connection.permissionProfile, approvalPolicy, approvalsReviewer: 'user',
+        model: connection.model.model, config: { ...threadConfig(connection.inherited, service.url, binding.token), 'features.shell_tool': Boolean(exercise) },
         baseInstructions: 'You are an Arthegall agent. Use the runner MCP tools for context and explicit outcomes. Never spawn agents or use tools outside your grant.',
-        developerInstructions: `${context.instructions}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`,
+        developerInstructions: instructions,
       };
-      const priorThread = store.session(context.assignmentId);
+      const priorThread = exercise ? undefined : store.session(context.assignmentId);
       const thread = z.object({ thread: z.object({ id: z.string() }), model: z.string() }).parse(await connection.rpc.request(priorThread ? 'thread/resume' : 'thread/start', priorThread ? { ...params, threadId: priorThread, excludeTurns: true } : params));
-      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort);
+      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort, !exercise);
       store.publish(context.runId, { kind: 'activity', message: `Codex ${thread.model}; effort ${connection.model.defaultReasoningEffort}; definition ${context.definitionVersion}.` });
       let text = '', savedText = '';
       const flushText = () => {
@@ -138,25 +147,38 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         }
       });
       flush = setInterval(flushText, 250);
-      // Default bootstrap configuration has no native shell. Any unexpected
-      // request is denied; adding native execution requires a separate grant.
-      connection.rpc.onRequest = async () => { throw new Error('Tool is outside bootstrap grant'); };
+      const startedTurn = Promise.withResolvers<string>();
+      void startedTurn.promise.catch(() => {});
+      let requested = false;
+      connection.rpc.onRequest = async (method, raw) => {
+        if (!exercise || requested || method !== 'item/commandExecution/requestApproval') throw new Error('Tool is outside bootstrap grant');
+        const request = z.object({ threadId: z.string(), turnId: z.string(), cwd: z.string(), command: z.string() }).parse(raw);
+        if (request.threadId !== thread.thread.id || request.cwd !== workspace || !['/bin/zsh', '/bin/bash', '/bin/sh'].some((shell) => request.command === `${shell} -c "${command}"`)) throw new Error('Operation is outside the exact synthetic grant');
+        requested = true;
+        if (request.turnId !== await startedTurn.promise) throw new Error('Approval turn mismatch');
+        const approvalId = randomUUID();
+        const decision = new Promise<unknown>((resolve) => approvals.set(approvalId, { runId: context.runId, resolve }));
+        store.publish(context.runId, { kind: 'approval', approval: { approvalId, command: `${command}\nScope: this run’s synthetic file in the assignment workspace.` } });
+        return decision;
+      };
       const finished = connection.rpc.waitFor((event) => event.method === 'turn/completed' && Turn.parse(event.params).threadId === thread.thread.id, 10 * 60_000);
       void finished.catch(() => {});
-      const started = z.object({ turn: z.object({ id: z.string() }) }).parse(await connection.rpc.request('turn/start', {
-        threadId: thread.thread.id, input: [{ type: 'text', text: context.messages.at(-1)?.text ?? 'Read the current context.' }],
-        permissions: connection.permissionProfile, approvalPolicy: 'never', effort: connection.model.defaultReasoningEffort,
-      }));
+      const started = await connection.rpc.request('turn/start', {
+        threadId: thread.thread.id, input: [{ type: 'text', text: exercise ? instructions : context.messages.at(-1)?.text ?? 'Read the current context.' }],
+        permissions: connection.permissionProfile, approvalPolicy, effort: connection.model.defaultReasoningEffort,
+      }).then((value) => z.object({ turn: z.object({ id: z.string() }) }).parse(value)).catch((error: unknown) => { startedTurn.reject(error); throw error; });
       store.mapTurn(context.runId, started.turn.id);
+      startedTurn.resolve(started.turn.id);
       const terminal = Turn.parse((await finished).params);
+      if (terminal.turn.id !== started.turn.id) throw new Error('Provider completion belongs to another turn');
       clearInterval(flush); flush = undefined;
       flushText();
       const outcome = store.execution(context.runId).outcome;
+      if (terminal.turn.error && authenticationFailure(new Error(terminal.turn.error.message))) throw new SignInNeeded();
       if (terminal.turn.status !== 'completed' || !outcome) throw new Error('No explicit completed provider outcome');
       store.finish(context.runId, Outcome.parse(JSON.parse(outcome)));
     } catch (error) {
-      if (error instanceof SignInNeeded) { setStatus('sign_in_needed'); return; }
-      setStatus('unavailable');
+      setStatus(error instanceof SignInNeeded || authenticationFailure(error) ? 'sign_in_needed' : 'unavailable');
       const run = store.execution(context.runId);
       if (run.state === 'running') {
         store.publish(context.runId, { kind: 'activity', message: 'Provider execution ended without confirmed completion. The saved thread and attempt require reconciliation; no automatic replay was attempted.' });
@@ -165,6 +187,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
       // Startup failures leave work queued. The bounded polling interval permits
       // recovery after installation or sign-in without replaying started work.
     } finally {
+      for (const [id, approval] of approvals) if (approval.runId === context.runId) { approval.resolve({ decision: 'decline' }); approvals.delete(id); }
       if (flush) clearInterval(flush);
       unsubscribe?.(); revoke?.();
       await rpc?.close(); rpc = undefined;

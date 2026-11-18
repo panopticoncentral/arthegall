@@ -47,9 +47,9 @@ export class RunnerStore {
     const row = this.db.prepare('SELECT thread_id FROM sessions WHERE assignment_id=?').get(assignmentId);
     return row ? z.object({ thread_id: z.string() }).parse(row).thread_id : undefined;
   }
-  mapThread(runId: string, assignmentId: string, threadId: string, model: string, effort: string) {
+  mapThread(runId: string, assignmentId: string, threadId: string, model: string, effort: string, remember = true) {
     this.db.transaction(() => {
-      this.db.prepare('INSERT INTO sessions VALUES (?,?) ON CONFLICT(assignment_id) DO UPDATE SET thread_id=excluded.thread_id').run(assignmentId, threadId);
+      if (remember) this.db.prepare('INSERT INTO sessions VALUES (?,?) ON CONFLICT(assignment_id) DO UPDATE SET thread_id=excluded.thread_id').run(assignmentId, threadId);
       this.db.prepare('UPDATE executions SET thread_id=?,model=?,effort=? WHERE run_id=?').run(threadId, model, effort, runId);
     })();
   }
