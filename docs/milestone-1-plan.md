@@ -6,7 +6,7 @@ Reviewed plan · November 17, 2026
 
 Milestone 1 delivers a durable conversation with the built-in administrator. A user pairs a browser, sends a message, receives a Codex-backed response through the local runner, and continues the conversation after process restarts or a connection interruption. The [architecture](architecture.md) defines the broader first release.
 
-This plan records the reviewed implementation sequence, dependency choices, security details, and UI treatment. Implementation awaits separate authorization. Milestone 2 adds conversational creation of agents and the on-demand usage assignment. Milestone 3 adds scheduled reporting and catch-up.
+This plan records the reviewed implementation sequence, dependency choices, security details, and UI treatment. Implementation was authorized after review; the [progress record](milestone-1-progress.md) distinguishes completed checks from remaining acceptance work. Milestone 2 adds conversational creation of agents and the on-demand usage assignment. Milestone 3 adds scheduled reporting and catch-up.
 
 ## Engineering baseline
 

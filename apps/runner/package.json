@@ -1,0 +1,12 @@
+{
+  "name": "@arthegall/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "better-sqlite3": "13.2.0",
+    "zod": "4.6.7",
+    "ws": "8.23.0"
+  }
+}

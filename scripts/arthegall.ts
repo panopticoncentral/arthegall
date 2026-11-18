@@ -1,0 +1,65 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { z } from 'zod';
+import { ServerStore } from '../apps/server/src/store.js';
+import { createServer } from '../apps/server/src/server.js';
+import { RunnerStore } from '../apps/runner/src/store.js';
+import { startRunner } from '../apps/runner/src/runner.js';
+
+process.umask(0o077);
+const root = resolve(process.env.ARTHEGALL_DATA_DIR ?? join(homedir(), '.arthegall'));
+const configPath = join(root, 'local.json');
+const Config = z.strictObject({ runnerId: z.string().uuid(), token: z.string(), origin: z.string().url(), port: z.number().int().min(1).max(65535) });
+const readConfig = () => Config.parse(JSON.parse(readFileSync(configPath, 'utf8')));
+const command = process.argv[2];
+if (command === 'setup') {
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const old = existsSync(configPath) ? readConfig() : undefined;
+  const tokenPath = join(root, 'runner-token');
+  if (!existsSync(tokenPath)) writeFileSync(tokenPath, old?.token ?? randomBytes(32).toString('base64url'), { mode: 0o600, flag: 'wx' });
+  const token = readFileSync(tokenPath, 'utf8');
+  const store = new ServerStore(join(root, 'server', 'server.sqlite'));
+  try {
+    const ids = store.setup(token);
+    const port = old?.port ?? z.coerce.number().int().min(1).max(65535).parse(process.env.ARTHEGALL_PORT ?? 4317);
+    const origin = old?.origin ?? process.env.ARTHEGALL_ORIGIN ?? `http://127.0.0.1:${port}`;
+    const config = Config.parse({ runnerId: ids.runnerId, token, origin, port });
+    if (!old) writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600, flag: 'wx' });
+    const runner = new RunnerStore(join(root, 'runner', 'runner.sqlite'), ids.runnerId);
+    runner.close();
+    console.log(`Open ${origin} after starting the server and runner.\nPairing code (valid for ten minutes): ${store.createPairingCode()}`);
+  } finally { store.close(); }
+} else if (command === 'pair') {
+  readConfig();
+  const store = new ServerStore(join(root, 'server', 'server.sqlite'));
+  try { console.log(`Pairing code (valid for ten minutes): ${store.createPairingCode()}`); } finally { store.close(); }
+} else if (command === 'server') {
+  const config = readConfig();
+  const store = new ServerStore(join(root, 'server', 'server.sqlite'));
+  const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../web');
+  const server = await createServer(store, config.origin, existsSync(webRoot) ? webRoot : undefined);
+  await server.listen({ host: '127.0.0.1', port: config.port });
+  console.log(`Arthegall server listening at ${config.origin}`);
+  const close = async () => { await server.close(); store.close(); };
+  process.once('SIGINT', () => { void close(); });
+  process.once('SIGTERM', () => { void close(); });
+} else if (command === 'runner') {
+  const config = readConfig();
+  const store = new RunnerStore(join(root, 'runner', 'runner.sqlite'), config.runnerId);
+  const runner = await startRunner(store, {
+    runnerId: config.runnerId, token: config.token, serverUrl: config.origin,
+    workspaceRoot: join(root, 'workspaces'),
+    ...(process.env.ARTHEGALL_CODEX_BIN ? { codex: process.env.ARTHEGALL_CODEX_BIN } : {}),
+    fake: process.argv.includes('--fake'),
+  });
+  console.log(process.argv.includes('--fake') ? 'Arthegall runner: deterministic test provider' : 'Arthegall runner: Codex provider');
+  const close = async () => { await runner.close(); store.close(); };
+  process.once('SIGINT', () => { void close(); });
+  process.once('SIGTERM', () => { void close(); });
+} else {
+  console.log('Usage: arthegall <setup|pair|server|runner>\nUse ARTHEGALL_DATA_DIR for an alternate private data directory.\nThe runner --fake option is for deterministic tests only.');
+  if (command && command !== 'help') process.exitCode = 1;
+}

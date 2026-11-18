@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "sourceMap": true
+  },
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["apps/web", "node_modules", "dist"]
+}
