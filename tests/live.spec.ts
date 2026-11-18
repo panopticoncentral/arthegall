@@ -1,3 +1,4 @@
+import { availablePort } from './helpers/port.js';
 import { test, expect } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -9,7 +10,7 @@ test('live Codex administrator retains context after runner and server restart',
   test.skip(process.env.ARTHEGALL_LIVE_CODEX !== '1', 'Explicit opt-in required for model calls');
   test.setTimeout(360_000);
   const root = mkdtempSync(join(tmpdir(), 'arthegall-live-test-'));
-  const port = 50_000 + Math.floor(Math.random() * 8_000), origin = `http://127.0.0.1:${port}`;
+  const port = await availablePort(), origin = `http://127.0.0.1:${port}`;
   const env = { ...process.env, ARTHEGALL_DATA_DIR: root, ARTHEGALL_PORT: String(port) };
   const cli = resolve('dist/scripts/arthegall.js');
   const setup = execFileSync(process.execPath, [cli, 'setup'], { env, encoding: 'utf8' });

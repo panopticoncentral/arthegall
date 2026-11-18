@@ -1,3 +1,4 @@
+import { availablePort } from './helpers/port.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -19,7 +20,7 @@ test('HTTP pairing, origin controls, snapshot-to-stream handoff and browser revo
   const root = mkdtempSync(join(tmpdir(), 'arthegall-http-test-'));
   const store = new ServerStore(join(root, 'server.sqlite'));
   store.setup('synthetic');
-  const port = 20_000 + Math.floor(Math.random() * 10_000), origin = `http://127.0.0.1:${port}`;
+  const port = await availablePort(), origin = `http://127.0.0.1:${port}`;
   const server = await createServer(store, origin);
   let ws: WebSocket | undefined;
   try {
@@ -50,7 +51,7 @@ test('real runner connection persists fake-provider response through server rest
   const store = new ServerStore(join(root, 'server.sqlite'));
   const ids = store.setup('synthetic');
   const session = store.pair(store.createPairingCode(), 'test')!;
-  const port = 30_000 + Math.floor(Math.random() * 10_000), origin = `http://127.0.0.1:${port}`;
+  const port = await availablePort(), origin = `http://127.0.0.1:${port}`;
   let server = await createServer(store, origin);
   const local = new RunnerStore(join(root, 'runner.sqlite'), ids.runnerId);
   const runner = await startRunner(local, { runnerId: ids.runnerId, token: 'synthetic', serverUrl: origin, workspaceRoot: join(root, 'workspaces'), fake: true });

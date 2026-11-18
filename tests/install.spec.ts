@@ -1,3 +1,4 @@
+import { availablePort } from './helpers/port.js';
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
@@ -9,7 +10,7 @@ test('packaged macOS user services retain a live conversation through stop/start
   test.skip(process.platform !== 'darwin' || !process.env.ARTHEGALL_PACKAGE_PATH || process.env.ARTHEGALL_LIVE_CODEX !== '1', 'Requires packaged macOS release and live-model opt-in');
   test.setTimeout(180_000);
   const root = mkdtempSync(join(tmpdir(), 'arthegall-install-'));
-  const port = 35000 + Math.floor(Math.random() * 5000), origin = `http://127.0.0.1:${port}`;
+  const port = await availablePort(), origin = `http://127.0.0.1:${port}`;
   const launcher = join(process.env.ARTHEGALL_PACKAGE_PATH!, 'bin', 'arthegall');
   const env = { ...process.env, ARTHEGALL_DATA_DIR: root, ARTHEGALL_PORT: String(port), ARTHEGALL_LAUNCH_AGENTS_DIR: join(root, 'LaunchAgents') };
   const command = (action: string) => execFileSync(launcher, [action], { env, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });

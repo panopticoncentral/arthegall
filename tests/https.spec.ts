@@ -1,3 +1,4 @@
+import { availablePort } from './helpers/port.js';
 import { test, expect } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -13,7 +14,7 @@ test('trusted HTTPS reverse proxy preserves secure pairing and both WebSocket ro
   const key = join(root, 'key.pem'), certificate = join(root, 'certificate.pem');
   // Trust exactly this ephemeral certificate in the browser, without disabling TLS validation.
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', certificate, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1', '-addext', 'basicConstraints=critical,CA:TRUE'], { stdio: 'ignore' });
-  const backendPort = 20000 + Math.floor(Math.random() * 10000);
+  const backendPort = await availablePort();
   const proxy = createHttpsServer({ key: readFileSync(key), cert: readFileSync(certificate) }, (request, response) => {
     const upstream = httpRequest({ host: '127.0.0.1', port: backendPort, path: request.url, method: request.method, headers: request.headers }, (result) => {
       response.writeHead(result.statusCode ?? 502, result.headers); result.pipe(response);

@@ -1,3 +1,4 @@
+import { availablePort } from './helpers/port.js';
 import { test, expect } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -6,7 +7,7 @@ import { join, resolve } from 'node:path';
 
 test('paired administrator DM, approvals, reconnect, refresh and narrow navigation', async ({ page }, info) => {
   const root = mkdtempSync(join(tmpdir(), 'arthegall-browser-test-'));
-  const port = 40_000 + Math.floor(Math.random() * 10_000);
+  const port = await availablePort();
   const origin = `http://127.0.0.1:${port}`;
   const env = { ...process.env, ARTHEGALL_DATA_DIR: root, ARTHEGALL_PORT: String(port) };
   const cli = resolve('dist/scripts/arthegall.js');

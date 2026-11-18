@@ -1,3 +1,4 @@
+import { availablePort } from './helpers/port.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
@@ -20,7 +21,7 @@ const stop = async (child: ChildProcess, signal: NodeJS.Signals = 'SIGKILL') => 
 for (const mode of ['signed-out', 'hold-account', 'hold-turn-response', 'hold-completion', 'expired-turn']) {
   test(`application recovery at ${mode} boundary avoids replay`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'arthegall-recovery-'));
-    const port = 30000 + Math.floor(Math.random() * 25000), origin = `http://127.0.0.1:${port}`;
+    const port = await availablePort(), origin = `http://127.0.0.1:${port}`;
     execFileSync(process.execPath, [resolve('dist/scripts/arthegall.js'), 'setup'], { env: { ...process.env, ARTHEGALL_DATA_DIR: root, ARTHEGALL_PORT: String(port) }, stdio: 'ignore' });
     const server = new ServerStore(join(root, 'server', 'server.sqlite'));
     const config = JSON.parse(readFileSync(join(root, 'local.json'), 'utf8'));

@@ -49,3 +49,7 @@ See [macOS installation](macos-installation.md) for packaging, services, diagnos
 A real private-network endpoint and second-device check remain open. Linux/Windows CI results are not yet recorded. Additional platform installers, agent creation, channels, reporting, scheduling, backup, retention, and updating belong to later milestones or release verification.
 
 Provider transcripts, generated schemas, local databases, service logs, credentials, account details, private paths, and real usage samples remain outside public artifacts. Tests and documentation use synthetic content.
+
+## Dependency review
+
+`npm audit --omit=dev` reports zero production vulnerabilities. The full development audit reports four related high-severity entries from Vite's `picomatch` dependency chain. [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) affects crafted extglob patterns; its published advisory currently lists no patched version. Arthegall does not accept user-supplied build globs, and the production package omits Vite and this dependency chain. Keep development/build inputs trusted and revisit when an upstream fix is published; an automatic major Vite downgrade was not applied.
