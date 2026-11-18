@@ -2,9 +2,9 @@
 
 Implementation and local acceptance · November 17, 2026
 
-The reviewed plan is committed as `395b54a`; the reviewed initial implementation is committed as `185d316`. The application includes separate server and runner SQLite stores, authenticated HTTP and WebSocket delivery, the Codex stdio adapter, a runner-managed MCP service, and a React conversation interface.
+The reviewed plan is committed as `395b54a`; the reviewed initial implementation is committed as `185d316`. Local milestone acceptance is implemented in `cf85230`, with the cross-platform test-port fix in `b0790f8`. The application includes separate server and runner SQLite stores, authenticated HTTP and WebSocket delivery, the Codex stdio adapter, a runner-managed MCP service, and a React conversation interface.
 
-Milestone 1 now includes a macOS release packager and user-service installer. Local acceptance covers the real administrator conversation, native approvals, refresh/restart recovery, and an HTTPS reverse proxy. Deployment on another device remains unverified because no private-network endpoint is configured. Remote CI results are recorded separately below; local checks do not establish other-platform enforcement.
+Milestone 1 now includes a macOS release packager and user-service installer. Local acceptance covers the real administrator conversation, native approvals, refresh/restart recovery, and an HTTPS reverse proxy. Deployment on another device remains unverified because no private-network endpoint is configured. The portable CI matrix has passed on macOS, Linux, and Windows; these checks do not establish real-provider permission enforcement outside macOS.
 
 ## Verification
 
@@ -17,7 +17,7 @@ Milestone 1 now includes a macOS release packager and user-service installer. Lo
 | Packaged installation | Official checksum-verified Node runtime and native SQLite binding bundled with production dependencies. Isolated macOS launchd installation, live browser conversation, stop/start, repeated setup and installation, restart/status, and duplicate-process exclusion. |
 | HTTPS proxy | Ephemeral certificate trusted explicitly by the runner and pinned in Chromium. Pairing, Secure/HttpOnly/SameSite cookies, browser WSS, runner WSS, messages, and refresh through a separate TLS proxy. This is a local test, not a second-device deployment. |
 | Provider probe | Nine live checks against Codex CLI 0.167.0-alpha.4.1, using the advertised default `gpt-6.2-sol` with low effort. Covers restricted reads, MCP identity, explicit outcomes, thread resume/history, approve/reject, interruption, and provider exit. |
-| Cross-platform CI | macOS/Linux/Windows workflow is configured; remote execution remains to be recorded. |
+| Cross-platform CI | macOS, Linux, and Windows build, type checks, and all 19 backend tests passed for `b0790f8`; Linux also passed both deterministic browser tests. [Verified run](https://github.com/panopticoncentral/arthegall/actions/runs/44256521848). |
 
 Live model tests are opt-in. Synthetic JSON-RPC provider tests exercise the real server, runner, MCP service, and process boundaries without a model call. They do not claim to simulate every provider failure.
 
@@ -46,7 +46,7 @@ The lifecycle API supplies the thread history used for reconciliation. [Codex ap
 
 See [macOS installation](macos-installation.md) for packaging, services, diagnostics, and private-network HTTPS configuration. The default listener remains loopback-only.
 
-A real private-network endpoint and second-device check remain open. Linux/Windows CI results are not yet recorded. Additional platform installers, agent creation, channels, reporting, scheduling, backup, retention, and updating belong to later milestones or release verification.
+A real private-network endpoint and second-device check remain open. Additional platform installers, agent creation, channels, reporting, scheduling, backup, retention, and updating belong to later milestones or release verification.
 
 Provider transcripts, generated schemas, local databases, service logs, credentials, account details, private paths, and real usage samples remain outside public artifacts. Tests and documentation use synthetic content.
 

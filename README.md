@@ -39,7 +39,7 @@ npm exec playwright install chromium
 npm run test:browser
 ```
 
-Backend and browser tests use synthetic data and a deterministic provider. Browser tests launch real server and runner processes. The CI matrix runs the portable checks on macOS, Linux, and Windows; this checkout has only been verified locally on macOS so far.
+Backend and browser tests use synthetic data and a deterministic provider. Browser tests launch real server and runner processes. The CI matrix has passed the portable checks on macOS, Linux, and Windows, plus browser checks on Linux. Live Codex and packaged service acceptance have been verified on macOS.
 
 Live checks use the configured Codex account and make model calls:
 
