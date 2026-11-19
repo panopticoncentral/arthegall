@@ -90,6 +90,17 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     store.decide(store.session(request.cookies.arthegall ?? '')!, id, decision);
     return { saved: true };
   });
+  app.post('/api/conversations/:id/close', async (request) => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    store.reporting.closeAssignment(id, store.session(request.cookies.arthegall ?? '')!);
+    return { saved: true };
+  });
+  app.post('/api/access/:id', async (request) => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const { decision, duration } = z.strictObject({ decision: z.enum(['accept','decline']), duration: z.enum(['run','assignment']) }).parse(request.body);
+    store.db.transaction(() => store.reporting.decide(store.session(request.cookies.arthegall ?? '')!, id, decision, duration))();
+    return { saved: true };
+  });
   app.post('/api/revoke', async (request, reply) => {
     store.revokeSession(store.session(request.cookies.arthegall ?? '')!);
     reply.clearCookie('arthegall', { path: '/' });
@@ -126,8 +137,8 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
         } else if (!binding.ready) throw new Error('Handshake required');
         else if (frame.type === 'accepted') store.accept(runnerId, frame.dispatchId);
         else if (frame.type === 'delivery') {
-          store.receive(runnerId, frame);
-          send(socket, { type: 'receipt', version: 1, deliveryId: frame.deliveryId });
+          const result = store.receive(runnerId, frame);
+          send(socket, { type: 'receipt', version: 1, deliveryId: frame.deliveryId, result });
         } else if (frame.type === 'decision_ack') store.acknowledgeDecision(runnerId, frame.approvalId);
         else if (frame.type === 'status') store.runnerStatus(runnerId, frame.status);
       } catch { socket.close(1008, 'Invalid delivery or storage failure'); }

@@ -3,13 +3,14 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Decision, Delivery, Dispatch, Outcome } from '../../../packages/contracts/src/index.js';
+import { Decision, Delivery, Dispatch, OperationResult, Outcome } from '../../../packages/contracts/src/index.js';
+import type { AdminOperation } from '../../../packages/contracts/src/reporting.js';
 import { migrations } from './migrations.js';
 
 const Execution = z.object({ run_id: z.string(), dispatch_id: z.string(), payload: z.string(), state: z.string(), thread_id: z.string().nullable(), turn_id: z.string().nullable(), model: z.string().nullable(), effort: z.string().nullable(), outcome: z.string().nullable(), text: z.string(), sequence: z.number() });
 export class RunnerStore {
   readonly db: Database.Database;
-  constructor(path: string, runnerId: string) {
+  constructor(path: string, private readonly runnerId: string) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
@@ -29,6 +30,7 @@ export class RunnerStore {
   close() { this.db.close(); }
   accept(input: unknown) {
     const dispatch = Dispatch.parse(input), payload = JSON.stringify(dispatch);
+    if (dispatch.context.access && dispatch.context.access.runnerId !== this.runnerId) throw new Error('Runner grant mismatch');
     this.db.transaction(() => {
       const row = this.db.prepare('SELECT * FROM executions WHERE run_id=? OR dispatch_id=?').get(dispatch.context.runId, dispatch.dispatchId);
       if (row) { if (Execution.parse(row).payload !== payload) throw new Error('Conflicting dispatch'); return; }
@@ -68,6 +70,23 @@ export class RunnerStore {
     const delivery = Delivery.parse({ type: 'delivery', version: 1, deliveryId: randomUUID(), runId, sequence: run.sequence + 1, event });
     this.db.prepare('UPDATE executions SET sequence=? WHERE run_id=?').run(delivery.sequence, runId);
     this.db.prepare('INSERT INTO deliveries(id,run_id,payload) VALUES (?,?,?)').run(delivery.deliveryId, runId, JSON.stringify(delivery));
+    return delivery.deliveryId;
+  }
+  requestOperation(runId: string, operation: AdminOperation) {
+    return this.db.transaction(() => {
+      const key = JSON.stringify(operation);
+      const existing = this.db.prepare('SELECT delivery_id FROM operations WHERE run_id=? AND operation=?').pluck().get(runId, key);
+      if (existing) return String(existing);
+      const execution = this.execution(runId);
+      if (execution.state !== 'running' || !Dispatch.parse(JSON.parse(execution.payload)).context.administrator) throw new Error('Administrator execution required');
+      const id = this.enqueue(runId, { kind: 'operation', operation });
+      this.db.prepare('INSERT INTO operations(run_id,operation,delivery_id) VALUES (?,?,?)').run(runId, key, id);
+      return id;
+    })();
+  }
+  operationResult(id: string) {
+    const saved = this.db.prepare('SELECT result FROM operations WHERE delivery_id=?').pluck().get(id);
+    return saved ? OperationResult.parse(JSON.parse(String(saved))) : undefined;
   }
   publish(runId: string, event: Delivery['event']) {
     if (event.kind === 'outcome') throw new Error('Use finish to commit outcome and run together');
@@ -92,7 +111,12 @@ export class RunnerStore {
     const row = this.db.prepare('SELECT payload FROM deliveries WHERE acknowledged=0 ORDER BY position LIMIT 1').get();
     return row ? Delivery.parse(JSON.parse(z.object({ payload: z.string() }).parse(row).payload)) : undefined;
   }
-  acknowledge(id: string) { this.db.prepare('UPDATE deliveries SET acknowledged=1 WHERE id=?').run(id); }
+  acknowledge(id: string, result?: OperationResult) {
+    this.db.transaction(() => {
+      if (result) this.db.prepare('UPDATE operations SET result=? WHERE delivery_id=?').run(JSON.stringify(result), id);
+      this.db.prepare('UPDATE deliveries SET acknowledged=1 WHERE id=?').run(id);
+    })();
+  }
   decision(input: unknown) {
     const decision = Decision.parse(input), payload = JSON.stringify(decision);
     this.db.transaction(() => {

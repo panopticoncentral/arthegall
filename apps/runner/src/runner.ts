@@ -7,9 +7,11 @@ import { Dispatch, Outcome, ServerFrame } from '../../../packages/contracts/src/
 import { CodexRpc } from './codex/rpc.js';
 import { launchArgs, providerEnvironment, threadConfig } from './codex/config.js';
 import { startToolService } from './mcp.js';
+import { readUsage } from './usage.js';
+import type { UsageReport, DateRange, AdminOperation } from '../../../packages/contracts/src/reporting.js';
 import { RunnerStore } from './store.js';
 
-export type RunnerOptions = { runnerId: string; token: string; serverUrl: string; workspaceRoot: string; codex?: string; fake?: boolean; approvalExercise?: boolean; rpcFactory?: (workspace: string, profile: string) => CodexRpc };
+export type RunnerOptions = { runnerId: string; token: string; serverUrl: string; workspaceRoot: string; codex?: string; usageRoots?: { codex: string; claude: string }; fake?: boolean; approvalExercise?: boolean; rpcFactory?: (workspace: string, profile: string) => CodexRpc };
 const Turn = z.object({ threadId: z.string(), turn: z.object({ id: z.string(), status: z.string(), error: z.object({ message: z.string() }).nullable().optional() }) });
 class SignInNeeded extends Error {}
 const authenticationFailure = (error: unknown) => error instanceof Error && /(?:\b401\b|unauthori[sz]ed|authentication|token.{0,40}expired|sign.?in|log.?in)/i.test(error.message);
@@ -46,7 +48,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         if (frame.type === 'dispatch') {
           const dispatch = store.accept(frame);
           send({ type: 'accepted', version: 1, dispatchId: dispatch.dispatchId });
-        } else if (frame.type === 'receipt') store.acknowledge(frame.deliveryId);
+        } else if (frame.type === 'receipt') store.acknowledge(frame.deliveryId, frame.result);
         else {
           const decision = store.decision(frame);
           const pending = approvals.get(decision.approvalId);
@@ -117,18 +119,47 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
       const connection = await provider(workspace);
       setStatus('ready');
       store.start(context.runId); // Persist before any request that could start work.
-      const exercise = options.approvalExercise && context.messages.at(-1)?.text === '/test native approval';
+      const exercise = !context.access && options.approvalExercise && context.messages.at(-1)?.text === '/test native approval';
       const command = `printf 'synthetic' > approval-note-${context.runId}.txt`;
       const approvalPolicy = exercise ? 'on-request' : 'never';
       const instructions = exercise
         ? `This is an explicitly enabled synthetic approval exercise. Use the shell tool with login=false to run exactly: ${command}. Request approval for the write. Do not try any other command, tool, or alternative operation after denial. Then report_outcome with a concise description of whether the write succeeded or was declined.`
-        : `${context.instructions}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`;
+        : `${context.instructions}\n${context.access ? "Use read_context. For a requested range call read_usage and present both sources, date range, coverage, subtotals and unknowns. For a follow-up use priorReport from read_context as the selected report. Never estimate spend." : ""}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`;
       if (exercise) store.publish(context.runId, { kind: 'activity', message: `Operator enabled a one-run synthetic approval exercise: ${command}. Scope: this assignment workspace; each native request requires an exact browser decision.` });
-      const binding = service.bind(context, async (outcome) => { store.stageOutcome(context.runId, outcome); });
+      const tools: string[] = [];
+      const capabilities: { admin?: (op: AdminOperation) => Promise<unknown>; usage?: (range: DateRange) => Promise<UsageReport> } = {};
+      let evidence: Promise<UsageReport> | undefined;
+      if (context.administrator && !exercise) {
+        tools.push('create_reporting_assignment', 'revise_reporting_agent', 'run_usage_report');
+        capabilities.admin = async (op) => {
+          const id = store.requestOperation(context.runId, op);
+          const deadline = Date.now() + 10_000;
+          while (!stopping && Date.now() < deadline && socket?.readyState === WebSocket.OPEN) {
+            const result = store.operationResult(id);
+            if (result) return result;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          return { status: 'pending', message: 'Saved on the runner for delivery. Server acceptance is pending.' };
+        };
+      }
+      if (context.access && context.range) {
+        tools.push('read_usage');
+        capabilities.usage = (range) => evidence ??= readUsage(range, options.usageRoots).then((report) => {
+          store.publish(context.runId, { kind: 'usage', report });
+          return report;
+        }).catch((error) => { evidence = undefined; throw error; });
+      }
+      const binding = service.bind(context, async (outcome) => {
+        if (context.range && outcome.status === 'completed') {
+          if (!evidence) throw new Error('Read usage for the requested period before completing the report');
+          await evidence;
+        }
+        store.stageOutcome(context.runId, outcome);
+      }, undefined, capabilities);
       revoke = binding.revoke;
       const params = {
         cwd: workspace, runtimeWorkspaceRoots: [workspace], permissions: connection.permissionProfile, approvalPolicy, approvalsReviewer: 'user',
-        model: connection.model.model, config: { ...threadConfig(connection.inherited, service.url, binding.token), 'features.shell_tool': Boolean(exercise) },
+        model: connection.model.model, config: { ...threadConfig(connection.inherited, service.url, binding.token, tools), 'features.shell_tool': Boolean(exercise) },
         baseInstructions: 'You are an Arthegall agent. Use the runner MCP tools for context and explicit outcomes. Never spawn agents or use tools outside your grant.',
         developerInstructions: instructions,
       };

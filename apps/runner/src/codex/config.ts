@@ -25,14 +25,14 @@ export function providerEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEn
   return result;
 }
 
-export function threadConfig(inheritedMcp: Record<string, unknown>, url: string, token: string) {
+export function threadConfig(inheritedMcp: Record<string, unknown>, url: string, token: string, tools: string[] = []) {
   // An empty map merges with user configuration; disable every inherited entry.
   const servers = Object.fromEntries(Object.keys(inheritedMcp).map((name) => [name, { enabled: false }]));
   servers.arthegall = { enabled: true };
   return {
     mcp_servers: { ...servers, arthegall: {
       enabled: true, url, http_headers: { Authorization: `Bearer ${token}` },
-      enabled_tools: ['read_context', 'report_outcome'],
+      enabled_tools: ['read_context', 'report_outcome', ...tools],
     } },
     'features.shell_tool': false,
     'features.view_image': false,

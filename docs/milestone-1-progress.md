@@ -4,7 +4,7 @@ Implementation and local acceptance · November 17, 2026
 
 The reviewed plan is committed as `395b54a`; the reviewed initial implementation is committed as `185d316`. Local milestone acceptance is implemented in `cf85230`, with the cross-platform test-port fix in `b0790f8`. The application includes separate server and runner SQLite stores, authenticated HTTP and WebSocket delivery, the Codex stdio adapter, a runner-managed MCP service, and a React conversation interface.
 
-Milestone 1 now includes a macOS release packager and user-service installer. Local acceptance covers the real administrator conversation, native approvals, refresh/restart recovery, and an HTTPS reverse proxy. Deployment on another device remains unverified because no private-network endpoint is configured. The portable CI matrix has passed on macOS, Linux, and Windows; these checks do not establish real-provider permission enforcement outside macOS.
+Milestone 1 now includes a macOS release packager and user-service installer. Local acceptance covers the real administrator conversation, native approvals, refresh/restart recovery, and an HTTPS reverse proxy. The owner paired a second device through the deployed private HTTPS endpoint and confirmed the application worked there. The portable CI matrix has passed on macOS, Linux, and Windows; these checks do not establish real-provider permission enforcement outside macOS.
 
 ## Verification
 
@@ -46,7 +46,7 @@ The lifecycle API supplies the thread history used for reconciliation. [Codex ap
 
 See [macOS installation](macos-installation.md) for packaging, services, diagnostics, and private-network HTTPS configuration. The default listener remains loopback-only.
 
-A real private-network endpoint and second-device check remain open. Additional platform installers, agent creation, channels, reporting, scheduling, backup, retention, and updating belong to later milestones or release verification.
+The owner completed second-device acceptance on the deployed private network. Additional platform installers, agent creation, channels, reporting, scheduling, backup, retention, and updating belong to later milestones or release verification.
 
 Provider transcripts, generated schemas, local databases, service logs, credentials, account details, private paths, and real usage samples remain outside public artifacts. Tests and documentation use synthetic content.
 

@@ -61,3 +61,28 @@ test('MCP denies absent, expired and wrong tokens, hostile origins and Host head
 test('provider environment excludes application credentials and unrelated API keys', () => {
   assert.deepEqual(providerEnvironment({ PATH: '/synthetic/bin', ARTHEGALL_RUNNER_TOKEN: 'synthetic', OPENAI_API_KEY: 'synthetic' }), { PATH: '/synthetic/bin' });
 });
+
+test('report tools follow the bound role, runner grant and exact period', async () => {
+  const service = await startToolService();
+  const range = { start: '2020-01-02', end: '2020-01-02' };
+  const access = { approvalId: randomUUID(), duration: 'run' as const, tool: 'read_usage' as const, runnerId: randomUUID() };
+  let reads = 0;
+  try {
+    for (const extra of [{}, { administrator: true as const }, { access }, { access, range }]) {
+      const binding = service.bind({ ...context(), ...extra }, async () => {}, undefined, {
+        admin: async () => ({}), usage: async () => { reads++; throw new Error('Synthetic input'); },
+      });
+      const client = new Client({ name: 'synthetic-client', version: '1' });
+      try {
+        await client.connect(new StreamableHTTPClientTransport(new URL(service.url), { requestInit: { headers: { Authorization: 'Bearer ' + binding.token } } }));
+        const names = (await client.listTools()).tools.map((tool) => tool.name);
+        assert.equal(names.includes('read_usage'), 'range' in extra);
+        assert.equal(names.includes('run_usage_report'), 'administrator' in extra);
+        assert.equal(names.includes('create_reporting_assignment'), 'administrator' in extra);
+        assert.equal((await client.callTool({ name: 'read_usage', arguments: { ...range, start: '2020-01-01' } })).isError,true);
+        assert.equal((await client.callTool({ name: 'read_usage', arguments: { ...range, runnerId: access.runnerId } })).isError,true);
+      } finally { await client.close(); binding.revoke(); }
+    }
+    assert.equal(reads,0);
+  } finally { await service.close(); }
+});

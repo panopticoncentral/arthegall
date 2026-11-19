@@ -73,4 +73,4 @@ Configure the proxy to forward to `http://127.0.0.1:4317`, preserve the public H
 
 Both the browser and runner must trust the proxy's certificate and resolve its hostname. For an internal CA, configure the browser/OS trust store and Node's `NODE_EXTRA_CA_CERTS` before starting the foreground runner. User services require the same CA environment at installation. Secure cookies and WSS are selected by the configured HTTPS origin. Pairing is still required on each browser.
 
-The local automated HTTPS test uses a temporary certificate and separate proxy, verifies both WebSocket routes and Secure cookies, and changes no system trust settings. A second-device deployment has not been tested; it needs a real endpoint and certificate.
+The local automated HTTPS test uses a temporary certificate and separate proxy, verifies both WebSocket routes and Secure cookies, and changes no system trust settings. The owner also confirmed pairing and use from a second device through the deployed private HTTPS endpoint.

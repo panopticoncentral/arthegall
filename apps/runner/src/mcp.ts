@@ -5,7 +5,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { ExecutionContext, Outcome } from '../../../packages/contracts/src/index.js';
 
-type Binding = {
+import { CreateAssignment, DateRange, Definition, ReportRequest, type AdminOperation, type UsageReport } from '../../../packages/contracts/src/reporting.js';
+
+type Capabilities = {
+  admin?: (operation: AdminOperation) => Promise<unknown>;
+  usage?: (range: DateRange) => Promise<UsageReport>;
+};
+type Binding = Capabilities & {
   context: ExecutionContext;
   recordOutcome: (outcome: Outcome) => Promise<void>;
   expiresAt: number;
@@ -39,6 +45,25 @@ export async function startToolService() {
       inputSchema: z.strictObject({}),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     }, async () => { valid(); return content(binding.context); });
+    if (binding.context.administrator && binding.admin) {
+      const annotations = { destructiveHint: false, openWorldHint: false, idempotentHint: true };
+      mcp.registerTool('create_reporting_assignment', { inputSchema: CreateAssignment, annotations,
+        description: 'Create a named Codex agent, its DM and an on-demand usage assignment. Separate agent instructions from the assignment responsibility. Request browser approval for access.' },
+      async (args) => { valid(); return content(await binding.admin!({ tool: 'create_reporting_assignment', args })); });
+      mcp.registerTool('revise_reporting_agent', { inputSchema: Definition, annotations, description: 'Revise the named reporting agent instructions. Authority stays scoped to its approved assignment.' },
+      async (args) => { valid(); return content(await binding.admin!({ tool: 'revise_reporting_agent', args })); });
+      mcp.registerTool('run_usage_report', { inputSchema: ReportRequest, annotations,
+        description: 'Queue a report in the named reporting agent DM. Range is inclusive, Pacific time. Omit for yesterday.' },
+      async (args) => { valid(); return content(await binding.admin!({ tool: 'run_usage_report', args })); });
+    }
+    if (binding.context.access && binding.context.range && binding.usage) {
+      mcp.registerTool('read_usage', { inputSchema: DateRange, description: 'Read aggregate usage for the exact inclusive date range in your dispatch.',
+        annotations: { readOnlyHint: true, openWorldHint: false } }, async (range) => {
+        valid();
+        if (range.start !== binding.context.range!.start || range.end !== binding.context.range!.end) throw new Error('Outside requested report period');
+        return content(await binding.usage!(range));
+      });
+    }
     mcp.registerTool('report_outcome', {
       description: 'Record the explicit result of this run. Call once after completing the response or identifying a blocker.',
       inputSchema: Outcome,
@@ -79,10 +104,10 @@ export async function startToolService() {
   authority = `127.0.0.1:${address.port}`;
   return {
     url: `http://${authority}/mcp`,
-    bind(context: ExecutionContext, recordOutcome: Binding['recordOutcome'], ttlMs = 60 * 60 * 1000) {
+    bind(context: ExecutionContext, recordOutcome: Binding['recordOutcome'], ttlMs = 60 * 60 * 1000, capabilities: Capabilities = {}) {
       const token = randomBytes(32).toString('base64url');
       const key = digest(token);
-      bindings.set(key, { context: ExecutionContext.parse(context), recordOutcome, expiresAt: Date.now() + ttlMs });
+      bindings.set(key, { ...capabilities, context: ExecutionContext.parse(context), recordOutcome, expiresAt: Date.now() + ttlMs });
       return { token, revoke: () => { bindings.delete(key); } };
     },
     async close() {
