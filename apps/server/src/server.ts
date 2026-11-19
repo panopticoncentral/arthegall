@@ -5,6 +5,7 @@ import staticFiles from '@fastify/static';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
 import { RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
+import type { Scan } from './restore-recovery.js';
 import { Conflict, ServerStore } from './store.js';
 
 export async function createServer(store: ServerStore, origin: string, webRoot?: string) {
@@ -14,7 +15,8 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   await app.register(cookie);
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
   const browsers = new Map<WebSocket, { sessionId: string; token: string; cursor: number }>();
-  const runners = new Map<WebSocket, { runnerId: string; ready: boolean }>();
+  const runners = new Map<WebSocket, { runnerId: string; ready: boolean; scan?: Scan }>();
+  store.recovery.offline();
   const alive = new Set<WebSocket>();
   const track = (socket: WebSocket) => {
     alive.add(socket);
@@ -39,7 +41,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       }
     }
     for (const [socket, runner] of runners) {
-      if (!runner.ready) continue;
+      if (!runner.ready || store.recovery.paused()) continue;
       const dispatch = store.nextDispatch(runner.runnerId);
       if (dispatch) send(socket, dispatch);
       for (const decision of store.decisions(runner.runnerId)) send(socket, decision);
@@ -83,25 +85,39 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
     return store.events(query.after);
   });
+  app.post('/api/recovery/resume', async () => {
+    store.recovery.resume();
+    return { saved: true };
+  });
+  app.post('/api/recovery/recheck', async () => {
+    if (store.recovery.paused()) for (const [socket, runner] of runners) {
+      store.recovery.offline(runner.runnerId);
+      socket.terminate();
+    }
+    return { saved: true };
+  });
   app.post('/api/messages', async (request) => store.send(store.session(request.cookies.arthegall ?? '')!, SendMessage.parse(request.body)));
-  app.post('/api/approvals/:id', async (request) => {
+  const checkApprovalChanges = async () => {
+    if (store.recovery.paused()) throw new Conflict('Review runner records before changing approvals or assignments');
+  };
+  app.post('/api/approvals/:id', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { decision } = z.strictObject({ decision: z.enum(['accept', 'decline']) }).parse(request.body);
     store.decide(store.session(request.cookies.arthegall ?? '')!, id, decision);
     return { saved: true };
   });
-  app.post('/api/conversations/:id/close', async (request) => {
+  app.post('/api/conversations/:id/close', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     store.reporting.closeAssignment(id, store.session(request.cookies.arthegall ?? '')!);
     return { saved: true };
   });
-  app.post('/api/schedules/:id', async (request) => {
+  app.post('/api/schedules/:id', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { decision } = z.strictObject({ decision: z.enum(['accept','decline']) }).parse(request.body);
     store.scheduler.decide(id, store.session(request.cookies.arthegall ?? '')!, decision === 'accept');
     return { saved: true };
   });
-  app.post('/api/access/:id', async (request) => {
+  app.post('/api/access/:id', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { decision, duration } = z.strictObject({ decision: z.enum(['accept','decline']), duration: z.enum(['run','assignment']) }).parse(request.body);
     store.db.transaction(() => store.reporting.decide(store.session(request.cookies.arthegall ?? '')!, id, decision, duration))();
@@ -130,6 +146,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     const runnerId = request.headers['x-arthegall-runner'];
     if (typeof runnerId !== 'string' || !store.authenticateRunner(runnerId, token)) { socket.close(1008); return; }
     for (const [other, binding] of runners) if (binding.runnerId === runnerId) { runners.delete(other); other.close(1000, 'Runner reconnected'); }
+    store.recovery.offline(runnerId);
     runners.set(socket, { runnerId, ready: false });
     track(socket);
     socket.on('message', (raw) => {
@@ -139,8 +156,21 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
         if (!binding) throw new Error('Superseded connection');
         if (frame.type === 'hello') {
           if (frame.runnerId !== runnerId) throw new Error('Identity mismatch');
+          if (binding.ready) throw new Error('Duplicate handshake');
           binding.ready = true;
+          if (store.recovery.paused()) {
+            if (!frame.inventoryVersion) { store.recovery.unsupported(runnerId); return; }
+            store.recovery.begin(runnerId);
+            binding.scan = { received: 0, failed: false };
+            send(socket, { type: 'inventory_next', version: 1 });
+          }
         } else if (!binding.ready) throw new Error('Handshake required');
+        else if (frame.type === 'inventory') {
+          if (!binding.scan || !store.recovery.paused()) throw new Error('Unexpected inventory');
+          store.recovery.apply(runnerId, binding.scan, frame.item);
+          if (frame.item.kind === 'end') delete binding.scan;
+          else send(socket, { type: 'inventory_next', version: 1 });
+        } else if (store.recovery.paused() && frame.type !== 'status') return;
         else if (frame.type === 'accepted') store.accept(runnerId, frame.dispatchId);
         else if (frame.type === 'delivery') {
           const result = store.receive(runnerId, frame);
@@ -150,7 +180,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       } catch { socket.close(1008, 'Invalid delivery or storage failure'); }
     });
     socket.on('close', () => {
-      if (runners.delete(socket)) store.runnerStatus(runnerId, 'unavailable');
+      if (runners.delete(socket)) { store.recovery.offline(runnerId); store.runnerStatus(runnerId, 'unavailable'); }
     });
   });
   if (webRoot) {

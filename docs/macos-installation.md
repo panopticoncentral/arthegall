@@ -42,6 +42,38 @@ Here `arthegall` stands for that full launcher path; installation does not modif
 
 If the browser says **Codex sign-in needed**, run `codex login` as the runner's macOS user. New queued messages remain durable. Interrupted work with uncertain effects is blocked rather than replayed automatically.
 
+## Back up and restore the server
+
+Use the installed launcher and the same data directory as the services. Choose a new directory under an existing private backup destination.
+
+```sh
+arthegall backup /path/to/private/backups/server-snapshot
+```
+
+The server can stay online. The command uses SQLite online backup, checks database integrity and foreign keys, and writes a manifest with the server identity and SHA-256. The current schema stores all server-managed content, including report evidence and message text, inside the database. Keep the whole directory private. Keep separate machine backups of the installation configuration, runner database, workspaces, and provider credentials.
+
+To restore this installation, keep its local configuration and the newest available runner database. Preserve a backup of the current server first. Stop the services, then use the backup directory as the restore argument.
+
+```sh
+arthegall stop
+arthegall restore /path/to/private/backups/server-snapshot
+arthegall start
+```
+
+Restore checks the staged database, manifest, schema and enrolled identity before atomically replacing the server database. A validation failure leaves the current database installed. A successful restore persists a dispatch pause. A paired browser can inspect history and queue messages while dispatch is paused.
+
+Open a paired DM and look for **Dispatch paused after restore**. Each runner must reconnect with a version that supports inventory. The server checks its retained dispatches, decisions and deliveries, including acknowledged results. A recovered scheduled report uses the original occurrence, DM and message IDs. **Resume dispatch** becomes available once every enrolled runner has checked in and all records agree. Restarting either service repeats the check and preserves the pause.
+
+For an unresolved run, use the displayed run ID to inspect its runner execution and the corresponding server activity or approval. Preserve both databases. If evidence was missing, reconnect the runner with its intact records or restore a more recent verified server snapshot, then select **Check runners again**. A missing post-backup interactive command, an earlier scheduled dispatch without its original message IDs, a missing central-operation receipt, or conflicting approval decisions can require a newer snapshot. Recovery keeps dispatch paused while those differences remain.
+
+Run the operator drill against a package with:
+
+```sh
+ARTHEGALL_PACKAGE_PATH=/absolute/path/to/package npm exec playwright test -- tests/restore.spec.ts
+```
+
+The drill uses a temporary installation, a synthetic provider and isolated usage records. It takes an online backup before the scheduled time, restores only the server, restarts it during replay, repeats a delivery, and checks the original report, evidence and reply target through the paired browser.
+
 ## Synthetic native approval acceptance
 
 Installed services keep native shell disabled. To exercise a real approval in an isolated test data directory, run foreground setup/server commands and:

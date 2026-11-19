@@ -37,6 +37,7 @@ export type ExecutionContext = z.infer<typeof ExecutionContext>;
 export const Dispatch = z.strictObject({
   type: z.literal('dispatch'), version: z.literal(ProtocolVersion),
   dispatchId: Id, context: ExecutionContext,
+  reportMessages: z.strictObject({ conversationId: Id, userId: Id, assistantId: Id }).optional(),
 });
 export type Dispatch = z.infer<typeof Dispatch>;
 export const Approval = z.strictObject({
@@ -65,15 +66,24 @@ export const Decision = z.strictObject({
   approvalId: Id, runId: Id, decision: z.enum(['accept', 'decline']),
 });
 export type Decision = z.infer<typeof Decision>;
+// Recovery pulls one bounded frame at a time, including deliveries already receipted.
+export const InventoryItem = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('execution'), dispatch: Dispatch, state: z.enum(['queued','running','done']), outcomeHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), sequence: z.number().int().nonnegative() }),
+  z.strictObject({ kind: z.literal('delivery'), delivery: Delivery, decision: Decision.optional(), result: OperationResult.optional() }),
+  z.strictObject({ kind: z.literal('end') }),
+]);
+export type InventoryItem = z.infer<typeof InventoryItem>;
 export const RunnerFrame = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('hello'), version: z.literal(ProtocolVersion), runnerId: Id }),
+  z.strictObject({ type: z.literal('hello'), version: z.literal(ProtocolVersion), runnerId: Id, inventoryVersion: z.literal(1).optional() }),
   z.strictObject({ type: z.literal('accepted'), version: z.literal(ProtocolVersion), dispatchId: Id }),
   z.strictObject({ type: z.literal('status'), version: z.literal(ProtocolVersion), status: z.enum(['ready', 'sign_in_needed', 'unavailable']) }),
   Delivery,
+  z.strictObject({ type: z.literal('inventory'), version: z.literal(1), item: InventoryItem }),
   z.strictObject({ type: z.literal('decision_ack'), version: z.literal(ProtocolVersion), approvalId: Id }),
 ]);
 export const ServerFrame = z.discriminatedUnion('type', [
   Dispatch, Decision,
+  z.strictObject({ type: z.literal('inventory_next'), version: z.literal(1) }),
   z.strictObject({ type: z.literal('receipt'), version: z.literal(ProtocolVersion), deliveryId: Id, result: OperationResult.optional() }),
 ]);
 export const SendMessage = z.strictObject({ commandId: Id, conversationId: Id.optional(), replyTo: Id.optional(), text: z.string().trim().min(1).max(16_000) });
@@ -81,6 +91,8 @@ export const Snapshot = z.object({
   conversations: z.array(z.object({ id: Id, name: z.string(), administrator: z.number(), closed: z.number() })),
   schedules: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, conversationId: Id, name: z.string(), time: z.string(), backfill: z.number(), state: z.enum(['pending','active']) })),
   grants: z.array(z.object({ id: Id, name: z.string(), conversationId: Id })),
+  recovery: z.object({ runners: z.array(z.object({ id: Id, status: z.string() })),
+    issues: z.array(z.object({ runId: Id, reason: z.string() })), ready: z.boolean() }).nullable(),
   cursor: z.number().int().nonnegative(), runnerConnected: z.boolean(),
   messages: z.array(z.object({ id: Id, conversationId: Id, evidence: UsageReport.nullable(), requestedReport: z.number(), author: z.enum(['user', 'assistant']), text: z.string(), state: z.string() })),
   approvals: z.array(z.object({ id: Id, runId: Id, conversationId: Id, command: z.string() })),

@@ -125,6 +125,8 @@ Standalone runner installation adds other machines through pairing or SSH deploy
 
 Provide automatic daily server backups and an on-demand backup command, with a user-selected destination and configurable retention. Backups include a consistent SQLite snapshot and server-managed files referenced by it. SQLite's online backup facilities support creating a database snapshot while the server is running. [SQLite backup documentation](https://sqlite.org/backup.html)
 
+The [on-demand backup and restore commands](macos-installation.md#back-up-and-restore-the-server) implement the manual checkpoint. Daily backup scheduling and configurable retention remain future work.
+
 A restored server starts with dispatch paused, reconciles with runners, and surfaces unresolved outcomes before resuming assignments. Runners may have completed work since the backup, so an older server record requires reconciliation before redispatch. Runner workspaces and provider credentials are covered by backups of their respective machines.
 
 Retain conversations, reports, agent definitions and revisions, memories, approvals, and assignment summaries until the user explicitly deletes them. Archiving preserves channel contents. Detailed execution records and intermediate workspace files default to 30 days of retention after a run closes. The period is configurable, and the user can pin a run to preserve its evidence. Explicit deliverables remain with the conversation.

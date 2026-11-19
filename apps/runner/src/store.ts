@@ -1,9 +1,9 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Decision, Delivery, Dispatch, OperationResult, Outcome } from '../../../packages/contracts/src/index.js';
+import { Decision, Delivery, Dispatch, type InventoryItem, OperationResult, Outcome } from '../../../packages/contracts/src/index.js';
 import type { AdminOperation } from '../../../packages/contracts/src/reporting.js';
 import { migrations } from './migrations.js';
 
@@ -107,6 +107,33 @@ export class RunnerStore {
       this.enqueue(runId, { kind: 'outcome', outcome });
       this.db.prepare("UPDATE executions SET state='done',outcome=? WHERE run_id=?").run(JSON.stringify(outcome), runId);
     })();
+  }
+  // The connection holds execution starts while inventory is being read. Keyset
+  // reads avoid both unbounded frames and a SQLite iterator across socket waits.
+  *inventory(): Generator<InventoryItem> {
+    let cursor = 0;
+    const executions = this.db.prepare('SELECT rowid,payload,state,sequence,outcome FROM executions WHERE rowid>? ORDER BY rowid LIMIT 1');
+    const deliveries = this.db.prepare(`SELECT d.position,d.payload,o.result FROM deliveries d
+      LEFT JOIN operations o ON o.delivery_id=d.id WHERE d.run_id=? AND d.position>? ORDER BY d.position LIMIT 1`);
+    for (;;) {
+      const row = executions.get(cursor) as { rowid: number; payload: string; outcome: string | null; state: 'queued'|'running'|'done'; sequence: number } | undefined;
+      if (!row) break;
+      cursor = row.rowid;
+      const dispatch = Dispatch.parse(JSON.parse(row.payload));
+      const outcomeHash = row.outcome ? createHash('sha256').update(JSON.stringify(Outcome.parse(JSON.parse(row.outcome)))).digest('hex') : undefined;
+      yield { kind: 'execution', dispatch, state: row.state, sequence: row.sequence, ...(outcomeHash ? { outcomeHash } : {}) };
+      let position = 0;
+      for (;;) {
+        const item = deliveries.get(dispatch.context.runId, position) as { position: number; payload: string; result: string | null } | undefined;
+        if (!item) break;
+        position = item.position;
+        const delivery = Delivery.parse(JSON.parse(item.payload));
+        const saved = delivery.event.kind === 'approval' && this.db.prepare('SELECT payload FROM decisions WHERE approval_id=?').pluck().get(delivery.event.approval.approvalId);
+        yield { kind: 'delivery', delivery, ...(saved ? { decision: Decision.parse(JSON.parse(String(saved))) } : {}),
+          ...(item.result ? { result: OperationResult.parse(JSON.parse(item.result)) } : {}) };
+      }
+    }
+    yield { kind: 'end' };
   }
   nextDelivery(): Delivery | undefined {
     const row = this.db.prepare('SELECT payload FROM deliveries WHERE acknowledged=0 ORDER BY position LIMIT 1').get();

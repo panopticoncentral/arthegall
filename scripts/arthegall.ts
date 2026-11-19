@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { ServerStore } from '../apps/server/src/store.js';
 import { createServer } from '../apps/server/src/server.js';
 import { RunnerStore } from '../apps/runner/src/store.js';
+import { backupServer, restoreServer } from './backup.js';
 import { acquireProcessLock } from './process-lock.js';
 import { manageService } from './service.js';
 import { startRunner } from '../apps/runner/src/runner.js';
@@ -18,6 +19,10 @@ const configPath = join(root, 'local.json');
 const Config = z.strictObject({ runnerId: z.string().uuid(), token: z.string(), origin: z.string().url(), port: z.number().int().min(1).max(65535) });
 const readConfig = () => Config.parse(JSON.parse(readFileSync(configPath, 'utf8')));
 const command = process.argv[2];
+// Serialize short-lived CLI writers with the validated database replacement.
+if (['setup', 'pair', 'backup', 'restore'].includes(command ?? '')) {
+  process.once('exit', acquireProcessLock(root, 'server-maintenance'));
+}
 if (command === 'setup') {
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const old = existsSync(configPath) ? readConfig() : undefined;
@@ -39,6 +44,16 @@ if (command === 'setup') {
   readConfig();
   const store = new ServerStore(join(root, 'server', 'server.sqlite'));
   try { console.log(`Pairing code (valid for ten minutes): ${store.createPairingCode()}`); } finally { store.close(); }
+} else if (command === 'backup' || command === 'restore') {
+  if (process.argv.length !== 4) throw new Error('Specify one backup directory');
+  const directory = resolve(process.argv[3]!);
+  if (command === 'backup') {
+    await backupServer(root, directory);
+    console.log('Verified server backup saved to ' + directory);
+  } else {
+    await restoreServer(root, directory, readConfig());
+    console.log('Server restored with dispatch paused. Start services and open the paired browser to reconcile.');
+  }
 } else if (command === 'server') {
   const unlock = acquireProcessLock(root, 'server');
   const config = readConfig();
@@ -68,6 +83,6 @@ if (command === 'setup') {
 } else if (['install', 'start', 'stop', 'restart', 'status'].includes(command ?? '')) {
   manageService(command!, root, resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 } else {
-  console.log('Usage: arthegall <setup|pair|server|runner|install|start|stop|restart|status>\nUse ARTHEGALL_DATA_DIR for an alternate private data directory.\nThe runner --fake option is for deterministic tests only.');
+  console.log('Usage: arthegall <setup|pair|backup|restore|server|runner|install|start|stop|restart|status>\nUse ARTHEGALL_DATA_DIR for an alternate private data directory.\nThe runner --fake option is for deterministic tests only.');
   if (command && command !== 'help') process.exitCode = 1;
 }

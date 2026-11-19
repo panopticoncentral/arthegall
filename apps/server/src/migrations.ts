@@ -62,4 +62,9 @@ CREATE TABLE report_preferences (
   assignment_id TEXT NOT NULL REFERENCES reporting_assignments(assignment_id), revision INTEGER NOT NULL,
   instructions TEXT NOT NULL, source_run TEXT UNIQUE NOT NULL REFERENCES report_context(run_id),
   PRIMARY KEY(assignment_id,revision));
+` }, { version: 4, sql: `
+CREATE TABLE restore_runners (runner_id TEXT PRIMARY KEY REFERENCES runners(id), status TEXT NOT NULL);
+CREATE TABLE restore_closed (run_id TEXT PRIMARY KEY);
+CREATE TABLE restore_seen (runner_id TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(runner_id,run_id));
+CREATE TABLE restore_issues (runner_id TEXT NOT NULL, run_id TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(runner_id,run_id));
 ` }];

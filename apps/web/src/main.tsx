@@ -49,7 +49,9 @@ function App() {
   const [connections, setConnections] = useState(false);
   const cursor = useRef(0), socket = useRef<WebSocket | null>(null);
   const navButton = useRef<HTMLButtonElement>(null), composer = useRef<HTMLTextAreaElement>(null);
+  const generation = useRef(0);
   const refresh = useCallback(async () => {
+    const started = generation.current;
     try {
       const response = await fetch('/api/snapshot');
       if (response.status === 401) {
@@ -58,6 +60,7 @@ function App() {
       }
       if (!response.ok) throw new Error('Server unavailable');
       const next = Snapshot.parse(await response.json());
+      if (started !== generation.current) return null;
       if (next.cursor >= cursor.current) { cursor.current = next.cursor; setSnapshot(next); }
       setPaired(true); setOnline(true);
       return next;
@@ -68,6 +71,7 @@ function App() {
     const connect = async () => {
       if (disposed || connecting || (socket.current?.readyState === WebSocket.OPEN || socket.current?.readyState === WebSocket.CONNECTING)) return;
       connecting = true;
+      generation.current++; cursor.current = 0; // A restored server may have an earlier event cursor.
       const next = await refresh();
       if (next && !disposed) {
         const url = new URL('/events', location.href);
@@ -136,7 +140,18 @@ function App() {
         } catch { setError('Activity is temporarily unavailable'); }
       }}>Activity</button></header>
       <div className="status" role="status"><span className={status === 'Connected' ? 'dot connected' : 'dot'} />{status}{!snapshot.runnerConnected && snapshot.runs.some((run) => ['accepted', 'running', 'approval'].includes(run.state)) && ' · Existing work has an unknown outcome'}</div>
-      {connections && <section className="details"><h2>Local runner</h2><p>{snapshot.runnerConnected ? 'Connected to the server' : 'Waiting for the runner to reconnect'}</p><p>Codex: {provider === 'sign_in_needed' ? 'Run codex login on the runner, then return here. Queued messages will wait.' : provider === 'ready' ? 'Ready' : 'Availability is checked when work starts.'}</p>{!dm.administrator && !dm.closed && <button onClick={async () => {
+      {snapshot.recovery && <section className="approval" aria-label="Restore recovery">
+        <h2>Dispatch paused after restore</h2>
+        {snapshot.recovery.runners.map(r => <p key={r.id}>Runner {r.id} · {r.status === 'offline' ? 'Offline — waiting for reconnect' : r.status === 'unsupported' ? 'Update the runner to check its durable records' : r.status === 'checking' ? 'Checking durable records' : 'Inventory checked'}</p>)}
+        {snapshot.recovery.issues.map(issue => <p key={issue.runId}>Run {issue.runId} · {issue.reason}</p>)}
+        {snapshot.recovery.ready && <p>All runner records agree. Dispatch can safely resume.</p>}
+        {(['resume','recheck'] as const).map(action => <button key={action} disabled={!online || (action === 'resume' && !snapshot.recovery?.ready)}
+          onClick={async () => {
+            try { await post('/api/recovery/' + action, {}); await refresh(); }
+            catch (e) { setError(e instanceof Error ? e.message : 'Recovery request failed'); }
+          }}>{action === 'resume' ? 'Resume dispatch' : 'Check runners again'}</button>)}
+      </section>}
+      {connections && <section className="details"><h2>Local runner</h2><p>{snapshot.runnerConnected ? 'Connected to the server' : 'Waiting for the runner to reconnect'}</p><p>Codex: {provider === 'sign_in_needed' ? 'Run codex login on the runner, then return here. Queued messages will wait.' : provider === 'ready' ? 'Ready' : 'Availability is checked when work starts.'}</p>{!dm.administrator && !dm.closed && <button disabled={Boolean(snapshot.recovery)} onClick={async () => {
         if (!window.confirm('Close this reporting assignment and end its access? Its conversation and reports will remain available.')) return;
         try { await post('/api/conversations/' + dm.id + '/close', {}); await refresh(); }
         catch (e) { setError(e instanceof Error ? e.message : 'Could not close assignment'); }
@@ -164,19 +179,19 @@ function App() {
             <p>Allow {s.name} to use the local runner and read_usage for this reporting assignment every day at {s.time} America/Los_Angeles? Each report covers the previous Pacific calendar day.</p>
             <p>{s.backfill ? 'After downtime, deliver every missed report.' : 'After downtime, deliver the latest report and record earlier missed dates.'} Access includes replies about saved evidence and lasts until the schedule is replaced or the assignment closes.</p>
             <p>Assignment {s.assignmentId} · Runner {s.runnerId}</p>
-            {(['accept','decline'] as const).map(decision => <button key={decision} disabled={!online} onClick={async () => {
+            {(['accept','decline'] as const).map(decision => <button key={decision} disabled={!online || Boolean(snapshot.recovery)} onClick={async () => {
               try { await post('/api/schedules/' + s.id, { decision }); setError(''); await refresh(); }
               catch (e) { setError(e instanceof Error ? e.message : 'Decision could not be saved'); }
             }}>{decision === 'accept' ? 'Allow recurring reports' : 'Decline schedule'}</button>)}</section>)}
         {snapshot.grants.filter((grant) => dm.administrator || grant.conversationId === dm.id).map((grant) => <section className="approval" key={grant.id}>
           <h2>Reporting access requested</h2><p>{grant.name} needs the local runner and the read-only usage tool for its on-demand reporting assignment. The tool reads local Codex and Claude activity and returns aggregate counts and coverage.</p>
-          <div>{(['assignment', 'run', 'decline'] as const).map((choice) => <button key={choice} disabled={!online} onClick={async () => {
+          <div>{(['assignment', 'run', 'decline'] as const).map((choice) => <button key={choice} disabled={!online || Boolean(snapshot.recovery)} onClick={async () => {
             try { await post('/api/access/' + grant.id, { decision: choice === 'decline' ? 'decline' : 'accept', duration: choice === 'run' ? 'run' : 'assignment' }); setError(''); await refresh(); }
             catch (e) { setError(e instanceof Error ? e.message : 'Decision could not be saved'); }
           }}>{choice === 'assignment' ? 'Allow for this assignment' : choice === 'run' ? 'Allow next run only' : 'Decline'}</button>)}</div></section>)}
-        {snapshot.approvals.filter((approval) => approval.conversationId === dm.id).map((approval) => <section className="approval" key={approval.id}><h2>Approval needed</h2><p>The agent is waiting for your decision on this operation.</p><pre>{approval.command}</pre><div><button className="primary" disabled={!online} onClick={() => void decide(approval.id, 'accept')}>Approve once</button><button disabled={!online} onClick={() => void decide(approval.id, 'decline')}>Decline</button></div></section>)}
+        {snapshot.approvals.filter((approval) => approval.conversationId === dm.id).map((approval) => <section className="approval" key={approval.id}><h2>Approval needed</h2><p>The agent is waiting for your decision on this operation.</p><pre>{approval.command}</pre><div><button className="primary" disabled={!online || Boolean(snapshot.recovery)} onClick={() => void decide(approval.id, 'accept')}>Approve once</button><button disabled={!online || Boolean(snapshot.recovery)} onClick={() => void decide(approval.id, 'decline')}>Decline</button></div></section>)}
       </section>
-      <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>{replyTo && <p>Replying to the report for {messages.find((m) => m.id === replyTo)?.evidence?.range.start} <button type="button" onClick={() => { setReplyTo(undefined); sessionStorage.removeItem('arthegall.reply'); }}>Cancel reply</button></p>}<label htmlFor="message">Message {dm.name}</label><textarea id="message" ref={composer} value={pending?.text ?? draft} disabled={Boolean(pending || dm.closed)} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder={`Message ${dm.name}…`} rows={3} maxLength={16000} /><div className="composer-footer"><span className="muted">{!online ? 'Your draft is kept here until the server reconnects.' : pending ? 'Retry uses the same message to prevent duplicates.' : 'Enter to send · Shift + Enter for a new line'}</span><button className="primary" disabled={Boolean(dm.closed) || !online || sending || !(pending?.text || draft.trim())}>{sending ? 'Sending…' : pending ? 'Retry send' : snapshot.runnerConnected ? 'Send' : 'Queue message'}</button></div>{error && <p className="error" role="alert">{error}</p>}</form>
+      <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>{replyTo && <p>Replying to the report for {messages.find((m) => m.id === replyTo)?.evidence?.range.start} <button type="button" onClick={() => { setReplyTo(undefined); sessionStorage.removeItem('arthegall.reply'); }}>Cancel reply</button></p>}<label htmlFor="message">Message {dm.name}</label><textarea id="message" ref={composer} value={pending?.text ?? draft} disabled={Boolean(pending || dm.closed)} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder={`Message ${dm.name}…`} rows={3} maxLength={16000} /><div className="composer-footer"><span className="muted">{!online ? 'Your draft is kept here until the server reconnects.' : pending ? 'Retry uses the same message to prevent duplicates.' : 'Enter to send · Shift + Enter for a new line'}</span><button className="primary" disabled={Boolean(dm.closed) || !online || sending || !(pending?.text || draft.trim())}>{sending ? 'Sending…' : pending ? 'Retry send' : snapshot.runnerConnected && !snapshot.recovery ? 'Send' : 'Queue message'}</button></div>{error && <p className="error" role="alert">{error}</p>}</form>
     </main>
   </div>;
 }

@@ -23,6 +23,8 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
   let stopping = false, working = false, recovered = false;
   let status: 'ready' | 'sign_in_needed' | 'unavailable' = 'unavailable';
   let alive = true, nextConnectAt = 0;
+  let confirmedRun: string | undefined;
+  let inventory: ReturnType<RunnerStore['inventory']> | undefined;
   const approvals = new Map<string, { runId: string; resolve: (decision: unknown) => void }>();
   const send = (value: unknown) => {
     if (socket?.readyState === WebSocket.OPEN && socket.bufferedAmount < 512 * 1024) socket.send(JSON.stringify(value));
@@ -36,17 +38,26 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
     nextConnectAt = Date.now() + 1_000;
     const connection = new WebSocket(url, { headers: { Authorization: `Bearer ${options.token}`, 'X-Arthegall-Runner': options.runnerId }, maxPayload: 256 * 1024 });
     socket = connection;
+    confirmedRun = undefined; inventory = undefined;
     connection.on('open', () => {
       alive = true;
-      send({ type: 'hello', version: 1, runnerId: options.runnerId });
+      send({ type: 'hello', version: 1, runnerId: options.runnerId, inventoryVersion: 1 });
       send({ type: 'status', version: 1, status });
     });
     connection.on('message', (raw) => {
-      if (stopping) return;
+      if (stopping || socket !== connection) return;
       try {
         const frame = ServerFrame.parse(JSON.parse(raw.toString()));
-        if (frame.type === 'dispatch') {
+        if (frame.type === 'inventory_next') {
+          confirmedRun = undefined;
+          inventory ??= store.inventory();
+          const item = inventory.next().value;
+          if (!item) throw new Error('Unexpected inventory request');
+          send({ type: 'inventory', version: 1, item });
+        } else if (frame.type === 'dispatch') {
+          inventory = undefined;
           const dispatch = store.accept(frame);
+          confirmedRun = dispatch.context.runId;
           send({ type: 'accepted', version: 1, dispatchId: dispatch.dispatchId });
         } else if (frame.type === 'receipt') store.acknowledge(frame.deliveryId, frame.result);
         else {
@@ -122,6 +133,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
     try {
       const connection = await provider(workspace);
       setStatus('ready');
+      if (confirmedRun !== context.runId || socket?.readyState !== WebSocket.OPEN) return;
       store.start(context.runId); // Persist before any request that could start work.
       const exercise = !context.access && options.approvalExercise && context.messages.at(-1)?.text === '/test native approval';
       const command = `printf 'synthetic' > approval-note-${context.runId}.txt`;
@@ -246,7 +258,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
     try {
       if (!recovered) await recover();
       const dispatch = store.queued();
-      if (dispatch) { await execute(dispatch); nextAttemptAt = Date.now() + (status === 'ready' ? 0 : 5_000); }
+      if (dispatch && dispatch.context.runId === confirmedRun && socket?.readyState === WebSocket.OPEN) { await execute(dispatch); nextAttemptAt = Date.now() + (status === 'ready' ? 0 : 5_000); }
     } finally { working = false; }
   };
   let active = Promise.resolve();
