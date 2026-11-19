@@ -46,12 +46,13 @@ export class RunnerStore {
   interrupted() { return z.array(Execution).parse(this.db.prepare("SELECT * FROM executions WHERE state='running'").all()); }
   start(runId: string) { this.db.prepare("UPDATE executions SET state='running' WHERE run_id=? AND state='queued'").run(runId); }
   session(assignmentId: string) {
-    const row = this.db.prepare('SELECT thread_id FROM sessions WHERE assignment_id=?').get(assignmentId);
-    return row ? z.object({ thread_id: z.string() }).parse(row).thread_id : undefined;
+    const row = this.db.prepare('SELECT thread_id,thread_configuration FROM sessions WHERE assignment_id=?').get(assignmentId);
+    return row ? z.object({ thread_id: z.string(), thread_configuration: z.string().nullable() }).parse(row) : undefined;
   }
-  mapThread(runId: string, assignmentId: string, threadId: string, model: string, effort: string, remember = true) {
+  mapThread(runId: string, assignmentId: string, threadId: string, model: string, effort: string, configuration?: string) {
     this.db.transaction(() => {
-      if (remember) this.db.prepare('INSERT INTO sessions VALUES (?,?) ON CONFLICT(assignment_id) DO UPDATE SET thread_id=excluded.thread_id').run(assignmentId, threadId);
+      if (configuration) this.db.prepare(`INSERT INTO sessions(assignment_id,thread_id,thread_configuration) VALUES (?,?,?)
+        ON CONFLICT(assignment_id) DO UPDATE SET thread_id=excluded.thread_id,thread_configuration=excluded.thread_configuration`).run(assignmentId, threadId, configuration);
       this.db.prepare('UPDATE executions SET thread_id=?,model=?,effort=? WHERE run_id=?').run(threadId, model, effort, runId);
     })();
   }

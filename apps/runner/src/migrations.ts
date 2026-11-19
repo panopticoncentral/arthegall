@@ -8,4 +8,6 @@ CREATE TABLE decisions (approval_id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERE
 CREATE TABLE operations (
   run_id TEXT NOT NULL REFERENCES executions(run_id), operation TEXT NOT NULL, delivery_id TEXT NOT NULL UNIQUE REFERENCES deliveries(id),
   result TEXT, PRIMARY KEY(run_id,operation));
+` }, { version: 3, sql: `
+ALTER TABLE sessions ADD COLUMN thread_configuration TEXT;
 ` }];

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { availablePort } from './helpers/port.js';
@@ -25,6 +25,9 @@ for (const live of [false, true]) test(`${live ? 'Live Codex' : 'Deterministic p
   const app = await createServer(server, origin, resolve('dist/web'));
   await app.listen({ host: '127.0.0.1', port });
   const local = new RunnerStore(join(root, 'runner.sqlite'), ids.runnerId);
+  // A schema upgrade preserves the old mapping with an unknown configuration.
+  // Resuming this thread would give the new administrator its predecessor's history.
+  local.db.prepare('INSERT INTO sessions(assignment_id,thread_id) VALUES (?,?)').run(ids.assignmentId, 'legacy-thread');
   if (!live) writeFileSync(join(root, 'mode'), 'reporting');
   const runner = await startRunner(local, { token, runnerId: ids.runnerId, serverUrl: origin, workspaceRoot: join(root, 'work'), usageRoots,
     ...(!live ? { rpcFactory: (workspace: string) => new CodexRpc(process.execPath, [resolve('dist/tests/fixtures/provider.js'), root], workspace) } : {}) });
@@ -49,6 +52,8 @@ for (const live of [false, true]) test(`${live ? 'Live Codex' : 'Deterministic p
     await send('Rowan', 'How many cached input tokens did that report count? Reply with the number in digits.');
     await expect.poll(() => local.db.prepare("SELECT count(*) FROM executions WHERE state='done'").pluck().get(), { timeout: 90_000 }).toBe(3);
     await expect(page.locator('.message').last()).toContainText('5');
+    expect(local.session(ids.assignmentId)?.thread_id).not.toBe('legacy-thread');
+    if (!live) expect(readFileSync(join(root, 'calls'), 'utf8').split('\n')).not.toContain('thread/resume');
     const sessions = local.db.prepare('SELECT count(DISTINCT thread_id) FROM sessions').pluck().get();
     expect(sessions).toBe(2);
     expect(server.db.prepare('SELECT count(*) FROM report_context WHERE reply_to IS NOT NULL').pluck().get()).toBe(1);

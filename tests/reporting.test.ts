@@ -36,7 +36,7 @@ test('upgrade deployed schema with paired browser, prior messages and provider t
       assert.equal(server.session('synthetic-browser'),session);
       assert.equal(server.setup('synthetic').conversationId,dm);
       assert.equal(server.db.prepare('SELECT count(*) FROM definition_history').pluck().get(),2);
-      assert.equal(local.session(assignment),'synthetic-thread');
+      assert.deepEqual(local.session(assignment), { thread_id: 'synthetic-thread', thread_configuration: null });
       server.send(session,{ commandId: randomUUID(), text: 'Continue' });
       const dispatch = server.nextDispatch(runner)!;
       assert.equal(dispatch.context.definitionVersion,2); assert.equal(dispatch.context.administrator,true);

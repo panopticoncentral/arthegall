@@ -1,6 +1,6 @@
 import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { z } from 'zod';
 import { Dispatch, Outcome, ServerFrame } from '../../../packages/contracts/src/index.js';
@@ -161,11 +161,19 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         cwd: workspace, runtimeWorkspaceRoots: [workspace], permissions: connection.permissionProfile, approvalPolicy, approvalsReviewer: 'user',
         model: connection.model.model, config: { ...threadConfig(connection.inherited, service.url, binding.token, tools), 'features.shell_tool': Boolean(exercise) },
         baseInstructions: 'You are an Arthegall agent. Use the runner MCP tools for context and explicit outcomes. Never spawn agents or use tools outside your grant.',
-        developerInstructions: instructions,
+        developerInstructions: [instructions, `This run provides the following Arthegall tools: ${['read_context', 'report_outcome', ...tools].join(', ')}. Use the current tools and instructions when acting on requests in this conversation.`].join('\n'),
       };
-      const priorThread = exercise ? undefined : store.session(context.assignmentId);
+      // A resumed Codex thread retains earlier instructions and tool history.
+      // Compare the stable setup only. MCP credentials and endpoints rotate per run.
+      const configuration = createHash('sha256').update(JSON.stringify({
+        agentId: context.agentId, revision: context.definitionVersion, instructions: params.developerInstructions,
+        base: params.baseInstructions, tools, approvalPolicy,
+      })).digest('hex');
+      const saved = exercise ? undefined : store.session(context.assignmentId);
+      const priorThread = saved?.thread_configuration === configuration ? saved.thread_id : undefined;
       const thread = z.object({ thread: z.object({ id: z.string() }), model: z.string() }).parse(await connection.rpc.request(priorThread ? 'thread/resume' : 'thread/start', priorThread ? { ...params, threadId: priorThread, excludeTurns: true } : params));
-      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort, !exercise);
+      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort, exercise ? undefined : configuration);
+      if (saved && !priorThread) store.publish(context.runId, { kind: 'activity', message: 'Started a new Codex thread with current instructions and tools. Conversation history is available through read_context.' });
       store.publish(context.runId, { kind: 'activity', message: `Codex ${thread.model}; effort ${connection.model.defaultReasoningEffort}; definition ${context.definitionVersion}.` });
       let text = '', savedText = '';
       const flushText = () => {
