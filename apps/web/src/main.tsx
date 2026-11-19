@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { z } from 'zod';
+import { BackupControls } from './BackupControls.js';
 import { MessageMarkdown } from './MessageMarkdown.js';
 import './style.css';
 
@@ -140,6 +141,14 @@ function App() {
         } catch { setError('Activity is temporarily unavailable'); }
       }}>Activity</button></header>
       <div className="status" role="status"><span className={status === 'Connected' ? 'dot connected' : 'dot'} />{status}{!snapshot.runnerConnected && snapshot.runs.some((run) => ['accepted', 'running', 'approval'].includes(run.state)) && ' · Existing work has an unknown outcome'}</div>
+      {snapshot.backups?.enabled && snapshot.backups.error && <div className="details" role="alert">
+        <strong>Daily backup needs attention</strong><p>{snapshot.backups.error}</p>
+        {!connections && <button onClick={() => setConnections(true)}>Open backup settings</button>}
+      </div>}
+      {connections && snapshot.backups && <BackupControls key={JSON.stringify([snapshot.backups.destination,snapshot.backups.keep,snapshot.backups.enabled])}
+        status={snapshot.backups} online={online} paused={Boolean(snapshot.recovery)}
+        save={async (destination,keep,enabled) => { await post('/api/backups/settings',{destination,keep,enabled}); await refresh(); }}
+        retry={async () => { await post('/api/backups/retry',{}); await refresh(); }} />}
       {snapshot.recovery && <section className="approval" aria-label="Restore recovery">
         <h2>Dispatch paused after restore</h2>
         {snapshot.recovery.runners.map(r => <p key={r.id}>Runner {r.id} · {r.status === 'offline' ? 'Offline — waiting for reconnect' : r.status === 'unsupported' ? 'Update the runner to check its durable records' : r.status === 'checking' ? 'Checking durable records' : 'Inventory checked'}</p>)}

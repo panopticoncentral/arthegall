@@ -42,6 +42,16 @@ Here `arthegall` stands for that full launcher path; installation does not modif
 
 If the browser says **Codex sign-in needed**, run `codex login` as the runner's macOS user. New queued messages remain durable. Interrupted work with uncertain effects is blocked rather than replayed automatically.
 
+## Daily server backups
+
+Open **Connections → Daily server backups** in a paired browser. Enter the absolute path of an existing private folder on the server, choose how many daily copies to keep, and select **Enable daily backups**. New installations and upgrades start with this setting off. Each daily directory contains the same server snapshot and checksum manifest as an on-demand backup.
+
+Enabling saves the first copy immediately. The server takes subsequent backups at 3:00 AM in its local time zone, even with the browser closed and the runner offline. When the server wakes or starts after a missed backup, it takes one current snapshot. The settings panel shows the last verified path and time and the next attempt. A failure appears in the DM view and survives a restart. Reconnect the destination or correct the folder, then select **Retry daily backup**. The server also retries after 15 minutes.
+
+The server verifies a new snapshot before rotating older copies. Rotation uses the catalog of daily copies created by this installation in the selected folder. Changing the destination leaves the previous folder intact. Turning off the schedule keeps its copies. Manual backups and the live runner journal have independent lifetimes.
+
+To restore, pass the chosen daily snapshot directory to the restore command below. The schedule, status and rotation catalog live in the installation's private `server/daily-backups.sqlite`. Restoring a server snapshot preserves these local settings. Daily backups wait until restore reconciliation is complete and the operator resumes dispatch.
+
 ## Back up and restore the server
 
 Use the installed launcher and the same data directory as the services. Choose a new directory under an existing private backup destination.
@@ -72,7 +82,7 @@ Run the operator drill against a package with:
 ARTHEGALL_PACKAGE_PATH=/absolute/path/to/package npm exec playwright test -- tests/restore.spec.ts
 ```
 
-The drill uses a temporary installation, a synthetic provider and isolated usage records. It takes an online backup before the scheduled time, restores only the server, restarts it during replay, repeats a delivery, and checks the original report, evidence and reply target through the paired browser.
+The drill uses a temporary installation, a synthetic provider and isolated usage records. It exercises an unavailable backup folder, retries, rotates daily copies, restores a retained pre-report snapshot with the newer runner intact, restarts it during replay, repeats a delivery, and checks the original report, evidence and reply target through the paired browser.
 
 ## Synthetic native approval acceptance
 

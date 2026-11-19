@@ -87,7 +87,17 @@ export const ServerFrame = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('receipt'), version: z.literal(ProtocolVersion), deliveryId: Id, result: OperationResult.optional() }),
 ]);
 export const SendMessage = z.strictObject({ commandId: Id, conversationId: Id.optional(), replyTo: Id.optional(), text: z.string().trim().min(1).max(16_000) });
+export const BackupSettings = z.strictObject({
+  enabled: z.boolean(), destination: z.string().trim().max(4096), keep: z.number().int().positive(),
+});
+export type BackupSettings = z.infer<typeof BackupSettings>;
+export const DailyBackupStatus = BackupSettings.extend({
+  running: z.boolean(), nextDue: z.number().nullable(), lastSuccess: z.number().nullable(),
+  lastPath: z.string().nullable(), error: z.string().nullable(), timeZone: z.string(),
+});
+export type DailyBackupStatus = z.infer<typeof DailyBackupStatus>;
 export const Snapshot = z.object({
+  backups: DailyBackupStatus.optional(),
   conversations: z.array(z.object({ id: Id, name: z.string(), administrator: z.number(), closed: z.number() })),
   schedules: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, conversationId: Id, name: z.string(), time: z.string(), backfill: z.number(), state: z.enum(['pending','active']) })),
   grants: z.array(z.object({ id: Id, name: z.string(), conversationId: Id })),

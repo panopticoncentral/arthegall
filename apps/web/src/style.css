@@ -25,3 +25,7 @@
 .markdown a{color:inherit;text-decoration:underline;text-underline-offset:.16em}
 .original{margin-top:.7em}
 .original summary{cursor:pointer}
+.backup-settings form{display:flex;flex-wrap:wrap;align-items:end;gap:10px}
+.backup-settings label{display:grid;gap:4px;max-width:100%}
+.backup-settings input{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:8px;max-width:100%}
+.backup-settings input:not([type]){width:24em}.backup-settings code{overflow-wrap:anywhere}

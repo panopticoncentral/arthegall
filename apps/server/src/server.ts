@@ -4,11 +4,12 @@ import websocket from '@fastify/websocket';
 import staticFiles from '@fastify/static';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
-import { RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
+import { BackupSettings, RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
+import type { DailyBackups } from '../../../scripts/daily-backups.js';
 import type { Scan } from './restore-recovery.js';
 import { Conflict, ServerStore } from './store.js';
 
-export async function createServer(store: ServerStore, origin: string, webRoot?: string) {
+export async function createServer(store: ServerStore, origin: string, webRoot?: string, backups?: DailyBackups) {
   const expected = new URL(origin);
   if (expected.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(expected.hostname)) throw new Error('Remote browser access requires HTTPS');
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
@@ -50,6 +51,11 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   const timer = setInterval(() => {
     try { tick(); } catch { for (const socket of runners.keys()) socket.close(1011, 'Storage unavailable'); }
   }, 500);
+  if (backups) {
+    const timer = setInterval(() => { void backups.tick(); }, 30_000);
+    app.addHook('onReady', async () => { void backups.tick(); });
+    app.addHook('preClose', async () => { clearInterval(timer); await backups.close(); });
+  }
   app.addHook('preClose', async () => {
     clearInterval(timer);
     clearInterval(heartbeat);
@@ -80,11 +86,23 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     reply.setCookie('arthegall', session.token, { path: '/', httpOnly: true, sameSite: 'strict', secure: expected.protocol === 'https:', maxAge: 365 * 24 * 60 * 60 });
     return { paired: true };
   });
-  app.get('/api/snapshot', async () => Snapshot.parse({ ...store.snapshot(), runnerConnected: [...runners.values()].some((runner) => runner.ready) }));
+  app.get('/api/snapshot', async () => Snapshot.parse({ ...store.snapshot(), backups: backups?.status(), runnerConnected: [...runners.values()].some((runner) => runner.ready) }));
   app.get('/api/activity', async (request) => {
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
     return store.events(query.after);
   });
+  if (backups) {
+    app.post('/api/backups/settings', async request => {
+      backups.configure(BackupSettings.parse(request.body));
+      void backups.tick();
+      return { saved: true };
+    });
+    app.post('/api/backups/retry', async () => {
+      backups.retry();
+      void backups.tick();
+      return { saved: true };
+    });
+  }
   app.post('/api/recovery/resume', async () => {
     store.recovery.resume();
     return { saved: true };

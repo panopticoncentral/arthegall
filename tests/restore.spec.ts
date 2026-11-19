@@ -3,18 +3,19 @@
 import { test, expect } from '@playwright/test';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, cpSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, cpSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import WebSocket from 'ws';
+import { dailyCopy } from '../scripts/daily-copy.js';
 import { availablePort } from './helpers/port.js';
 import { reportingUpgrade } from './helpers/reporting-upgrade.js';
 import { ServerStore } from '../apps/server/src/store.js';
 import { RunnerStore } from '../apps/runner/src/store.js';
 
-test('server-only restore recovers an acknowledged occurrence through the paired DM', async ({ page }) => {
+test('rotated daily backup restores an acknowledged occurrence through the paired DM', async ({ page }) => {
   test.setTimeout(180_000);
   const root = mkdtempSync(join(tmpdir(), 'arthegall-restore-'));
   const prior = await reportingUpgrade(root);
@@ -52,18 +53,51 @@ test('server-only restore recovers an acknowledged occurrence through the paired
   const report = () => query(`SELECT o.*,r.state,r.user_message_id,r.assistant_message_id,m.conversation_id,m.text,c.evidence,d.id AS dispatch_id
     FROM report_occurrences o JOIN runs r ON r.id=o.run_id JOIN messages m ON m.id=r.assistant_message_id
     JOIN report_context c ON c.run_id=r.id JOIN dispatches d ON d.run_id=r.id`) as {run_id:string;state:string;assistant_message_id:string;conversation_id:string;period:string;text:string;evidence:string}[];
-  const backup = join(root,'snapshot');
+  const destination = join(root,'daily'), offline = join(root,'disconnected');
+  mkdirSync(destination);
+  const manual = join(destination,'operator-snapshot');
+  let backup: string;
   let local: RunnerStore | undefined;
   try {
     const seed = new ServerStore(path);
-    const due = Temporal.Now.zonedDateTimeISO('America/Los_Angeles').add({seconds:68}).with({second:0,millisecond:0,microsecond:0,nanosecond:0});
+    // Two earlier days make the packaged scheduler rotate on its first real tick.
+    for (const day of ['2020-01-01','2020-01-02']) await dailyCopy({ root, destination, keep: 2, day,
+      serverId: prior.ids.server, protectedPaths: [] });
+    cli('backup',manual);
+    renameSync(destination,offline);
+    const due = Temporal.Now.zonedDateTimeISO('America/Los_Angeles').add({seconds:78}).with({second:0,millisecond:0,microsecond:0,nanosecond:0});
     const time = due.toPlainTime().toString({smallestUnit:'minute'});
     seed.scheduler.propose(prior.assignment,prior.ids.runner,time,false,prior.run);
     seed.scheduler.decide(String(seed.db.prepare('SELECT id FROM report_schedules').pluck().get()),prior.session,true);
     seed.close();
     let server = launch('server');
     await expect.poll(async () => fetch(origin).then(r=>r.status).catch(()=>0)).toBe(200);
-    cli('backup',backup);
+    await page.context().addCookies([{url:origin,name:'arthegall',value:prior.browserToken,httpOnly:true}]);
+    await page.goto(origin);
+    await page.getByRole('button',{name:'Connections'}).click();
+    await page.getByLabel('Backup folder on the server').fill(destination);
+    await page.getByLabel('Daily copies to keep').fill('2');
+    await page.getByRole('button',{name:'Enable daily backups'}).click();
+    await expect(page.getByRole('alert')).toContainText('Daily backup needs attention');
+    await page.reload();
+    await expect(page.getByRole('alert')).toContainText('Daily backup needs attention');
+    const catalog = new Database(join(root,'server','daily-backups.sqlite'),{readonly:true});
+    try {
+      const copies = () => catalog.prepare('SELECT day,name FROM copies WHERE sha256 IS NOT NULL ORDER BY day').all() as {day:string;name:string}[];
+      const before = copies();
+      expect(before.map(c=>c.day)).toEqual(['2020-01-01','2020-01-02']);
+      for (const c of before) expect(existsSync(join(offline,c.name,'manifest.json'))).toBe(true);
+      renameSync(offline,destination);
+      await page.getByRole('button',{name:'Open backup settings'}).click();
+      await page.getByRole('button',{name:'Retry daily backup'}).click();
+      await expect(page.getByRole('alert')).toHaveCount(0);
+      const kept = copies();
+      expect(kept.map(c=>c.day)).toEqual(['2020-01-02',Temporal.Now.plainDateISO().toString()]);
+      expect(existsSync(join(destination,before[0]!.name))).toBe(false);
+      expect(existsSync(join(manual,'manifest.json'))).toBe(true);
+      backup = join(destination,kept[1]!.name);
+      await expect(page.getByText(/Last verified/)).toContainText(kept[1]!.name);
+    } finally { catalog.close(); }
     expect(Date.now()).toBeLessThan(due.epochMilliseconds);
     expect(report()).toEqual([]);
     const period = due.subtract({days:1}).toPlainDate().toString();
@@ -83,6 +117,23 @@ test('server-only restore recovers an acknowledged occurrence through the paired
     const originalProgress = progress();
     await stop(runner); await stop(server);
 
+    // Advance the installed scheduler by one local day while services are stopped.
+    // Today's completed report is now in the newest archive. Restore yesterday's.
+    const { DailyBackups } = await import(pathToFileURL(resolve(pkg ?? '.', 'dist/scripts/daily-backups.js')).href) as typeof import('../scripts/daily-backups.js');
+    let clock = new Date();
+    const scheduler = new DailyBackups(root,prior.ids.server,[],()=>false,()=>{},()=>clock);
+    let newest: string;
+    try {
+      clock = new Date(scheduler.status().nextDue!);
+      await scheduler.tick();
+      expect(scheduler.status().error).toBeNull();
+      newest = scheduler.status().lastPath!;
+      expect(newest).not.toBe(backup);
+      expect(existsSync(join(backup,'manifest.json'))).toBe(true);
+      const archived = new Database(join(newest,'server.sqlite'),{readonly:true});
+      try { expect(archived.prepare('SELECT run_id FROM report_occurrences').pluck().all()).toEqual([original.run_id]); }
+      finally { archived.close(); }
+    } finally { await scheduler.close(); }
     const bad = join(root,'corrupt'); cpSync(backup,bad,{recursive:true});
     writeFileSync(join(bad,'server.sqlite'),'synthetic corruption');
     expect(()=>cli('restore',bad)).toThrow(/checksum/);
@@ -90,8 +141,10 @@ test('server-only restore recovers an acknowledged occurrence through the paired
     cli('restore',backup);
     server = launch('server');
     await expect.poll(async () => fetch(origin).then(r=>r.status).catch(()=>0)).toBe(200);
-    await page.context().addCookies([{url:origin,name:'arthegall',value:prior.browserToken,httpOnly:true}]);
     await page.goto(origin);
+    await page.getByRole('button',{name:'Connections'}).click();
+    await expect(page.getByText(/Last verified/)).toContainText(newest);
+    await expect(page.getByLabel('Daily copies to keep')).toHaveValue('2');
     await expect(page.getByText(/Offline — waiting for reconnect/)).toBeVisible();
     await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeDisabled();
     expect(report()).toEqual([]);

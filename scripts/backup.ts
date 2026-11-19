@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { copyFile } from 'node:fs/promises';
+import { copyFile, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { migrations } from '../apps/server/src/migrations.js';
@@ -23,6 +23,15 @@ function validate(path: string) {
     if (version < 1 || version > migrations.length) throw new Error('Unsupported server snapshot schema');
     return z.uuid().parse(db.prepare("SELECT value FROM metadata WHERE key='server'").pluck().get());
   } finally { db.close(); }
+}
+export async function verifyBackup(directory: string, serverId: string, expectedHash?: string) {
+  const manifestPath = join(directory, 'manifest.json'), database = join(directory, 'server.sqlite');
+  if (!(await lstat(directory)).isDirectory() || !(await lstat(manifestPath)).isFile() || !(await lstat(database)).isFile())
+    throw new Error('Backup directory or files were replaced');
+  const manifest = Manifest.parse(JSON.parse(readFileSync(manifestPath, 'utf8')));
+  if (manifest.serverId !== serverId || (expectedHash && manifest.sha256 !== expectedHash) || await digest(database) !== manifest.sha256)
+    throw new Error('Backup identity or checksum differs from the verified snapshot');
+  return manifest.sha256;
 }
 export async function backupServer(root: string, destination: string) {
   const path = join(destination, 'server.sqlite');
