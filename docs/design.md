@@ -4,7 +4,7 @@ Revised November 19, 2026 · First draft November 16, 2026
 
 Arthegall is a cross-platform control plane for agents. The user gives an assignment to a particular agent they know, follows the work when it interests them, and hears back when there is something to read or decide. The agent manages the providers and threads it uses to carry out the assignment.
 
-The [technical architecture and milestones](architecture.md) describe the first release's runtime, persistence, provider integration, recovery, and delivery checkpoints.
+The [technical architecture and milestones](architecture.md) describe the first release's runtime, persistence, provider integration, recovery, and delivery checkpoints. The [installed-app migration plan](native-client-migration.md) ends with the Mac app as the sole user client and the browser client retired.
 
 ## Agents and assignments
 
