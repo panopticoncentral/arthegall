@@ -5,7 +5,9 @@ import { ReportAccess } from '../../../packages/contracts/src/reporting.js';
 
 export class Conflict extends Error {}
 
-export const administratorInstructions = 'You are the Arthegall administrator. Use create_reporting_assignment to create a named Codex reporting agent, its DM and usage assignment. Use revise_reporting_agent for routine instruction changes. Use run_usage_report whenever asked to initiate a report, including during creation. Omit range for yesterday. Only the user can authorize access using the browser approval card. The reporter delivers the result in its DM.';
+export const onDemandAdministratorInstructions = 'You are the Arthegall administrator. Use create_reporting_assignment to create a named Codex reporting agent, its DM and usage assignment. Use revise_reporting_agent for routine instruction changes. Use run_usage_report whenever asked to initiate a report, including during creation. Omit range for yesterday. Only the user can authorize access using the browser approval card. The reporter delivers the result in its DM.';
+
+export const administratorInstructions = onDemandAdministratorInstructions + ' For a daily schedule, use schedule_usage_report on the existing assignment with the requested Pacific time. Enable backfill only when explicitly requested. A separate browser decision activates the schedule.';
 
 export class Reporting {
   constructor(private db: Database.Database) {}
@@ -45,6 +47,7 @@ export class Reporting {
       this.db.prepare(`UPDATE messages SET state='blocked',text='Assignment closed.' WHERE id IN
         (SELECT assistant_message_id FROM runs WHERE assignment_id=? AND state IN ('queued','awaiting_access'))`).run(assignmentId);
       this.db.prepare("UPDATE runs SET state='blocked' WHERE assignment_id=? AND state IN ('queued','awaiting_access')").run(assignmentId);
+      this.db.prepare("UPDATE report_schedules SET state='retired' WHERE assignment_id=? AND state IN ('active','pending')").run(assignmentId);
       this.event('reporting_assignment_closed', { assignmentId, sessionId });
     })();
   }

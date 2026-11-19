@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
-import { AdminOperation, DateRange, ReportAccess, UsageReport } from './reporting.js';
+import { AdminOperation, DateRange, Preference, ReportAccess, UsageReport } from './reporting.js';
 
 export const ProtocolVersion = 1;
 export const Id = z.string().uuid();
 export const Outcome = z.strictObject({
   status: z.enum(['completed', 'waiting_for_user', 'blocked']),
+  assignmentPreference: Preference.optional(),
   message: z.string().trim().min(1).max(32_000),
 });
 export type Outcome = z.infer<typeof Outcome>;
@@ -21,11 +22,15 @@ export const ExecutionContext = z.strictObject({
   range: DateRange.optional(),
   priorReport: UsageReport.optional(),
   assignmentInstructions: z.string().max(2000).optional(),
+  occurrence: z.strictObject({ dueDate: z.iso.date(), dueAt: z.iso.datetime(), scheduleId: Id }).optional(),
+  preference: z.strictObject({ revision: z.number().int().positive(), instructions: Preference }).optional(),
   messages: z.array(z.strictObject({
     role: z.enum(['user', 'assistant']),
     text: z.string().max(32_000),
   })).max(40).refine((messages) => messages.reduce((size, message) => size + message.text.length, 0) <= 32_000, 'Conversation context exceeds budget'),
 }).refine((context) => !(context.administrator && context.access)
+  && (!context.occurrence || (context.access?.duration === 'recurring' && Boolean(context.range)))
+  && (!context.preference || Boolean(context.access))
   && (!(context.range || context.priorReport || context.assignmentInstructions) || Boolean(context.access)), 'Invalid execution authority');
 export type ExecutionContext = z.infer<typeof ExecutionContext>;
 
@@ -74,6 +79,7 @@ export const ServerFrame = z.discriminatedUnion('type', [
 export const SendMessage = z.strictObject({ commandId: Id, conversationId: Id.optional(), replyTo: Id.optional(), text: z.string().trim().min(1).max(16_000) });
 export const Snapshot = z.object({
   conversations: z.array(z.object({ id: Id, name: z.string(), administrator: z.number(), closed: z.number() })),
+  schedules: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, conversationId: Id, name: z.string(), time: z.string(), backfill: z.number(), state: z.enum(['pending','active']) })),
   grants: z.array(z.object({ id: Id, name: z.string(), conversationId: Id })),
   cursor: z.number().int().nonnegative(), runnerConnected: z.boolean(),
   messages: z.array(z.object({ id: Id, conversationId: Id, evidence: UsageReport.nullable(), requestedReport: z.number(), author: z.enum(['user', 'assistant']), text: z.string(), state: z.string() })),

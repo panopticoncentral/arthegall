@@ -85,6 +85,7 @@ function App() {
   }, [refresh]);
   useEffect(() => { sessionStorage.setItem('arthegall.draft', draft); }, [draft]);
   const dm = snapshot?.conversations.find((item) => item.id === selected) ?? snapshot?.conversations[0];
+  const schedule = snapshot?.schedules.find(s => s.conversationId === dm?.id && s.state === 'active');
   const messages = snapshot?.messages.filter((message) => message.conversationId === dm?.id) ?? [];
   function choose(id: string) {
     if (id !== dm?.id) {
@@ -125,7 +126,7 @@ function App() {
       <div className="rail-bottom"><button onClick={() => setConnections(!connections)}>Connections</button><span className="muted">Your agents, working together.</span></div>
     </aside>
     <main className="conversation">
-      <header><button className="nav-toggle" ref={navButton} aria-expanded={nav} aria-label="Open conversations" onClick={() => setNav(!nav)}>☰</button><div className="avatar">{dm.name.charAt(0)}</div><div><h1>{dm.name}</h1><p className="muted">{dm.administrator ? 'Setup and coordination' : dm.closed ? 'Closed reporting assignment' : 'On-demand usage reporting'}</p></div><button className="activity-toggle" aria-expanded={activity !== null} onClick={async () => {
+      <header><button className="nav-toggle" ref={navButton} aria-expanded={nav} aria-label="Open conversations" onClick={() => setNav(!nav)}>☰</button><div className="avatar">{dm.name.charAt(0)}</div><div><h1>{dm.name}</h1><p className="muted">{dm.administrator ? 'Setup and coordination' : dm.closed ? 'Closed reporting assignment' : schedule ? `Daily usage reporting · ${schedule.time} Pacific` : 'On-demand usage reporting'}</p></div><button className="activity-toggle" aria-expanded={activity !== null} onClick={async () => {
         if (activity) { setActivity(null); return; }
         try {
           const response = await fetch('/api/activity');
@@ -143,6 +144,15 @@ function App() {
       <section className="messages" aria-label="Conversation messages">
         {messages.length === 0 && <div className="welcome"><h2>{dm.administrator ? 'Your administrator is here.' : 'Usage reports appear here.'}</h2><p>Start a conversation. Your history stays with Arthegall.</p></div>}
         {messages.map((message) => <article key={message.id} className="message"><span className={`avatar ${message.author === 'user' ? 'user' : ''}`}>{message.author === 'user' ? 'Y' : dm.name.charAt(0)}</span><div><strong>{message.requestedReport ? 'Report request' : message.author === 'user' ? 'You' : dm.name}</strong><p className="message-text">{message.text || (message.state === 'awaiting_access' ? 'Waiting for your access decision…' : message.state === 'queued' ? 'Queued for the runner…' : 'Working…')}</p>{!['completed', 'complete'].includes(message.state) && <span className="message-state">{message.state === 'streaming' ? 'Responding…' : message.state.replaceAll('_', ' ')}</span>}{message.evidence && <RecordedUsage report={message.evidence} />}{message.evidence && <button type="button" disabled={Boolean(pending)} onClick={() => { setReplyTo(message.id); sessionStorage.setItem('arthegall.reply', message.id); composer.current?.focus(); }}>Reply to report</button>}</div></article>)}
+        {snapshot.schedules.filter(s => (dm.administrator || s.conversationId === dm.id) && s.state === 'pending').map(s =>
+          <section className="approval" key={s.id}><h2>Recurring reporting access requested</h2>
+            <p>Allow {s.name} to use the local runner and read_usage for this reporting assignment every day at {s.time} America/Los_Angeles? Each report covers the previous Pacific calendar day.</p>
+            <p>{s.backfill ? 'After downtime, deliver every missed report.' : 'After downtime, deliver the latest report and record earlier missed dates.'} Access includes replies about saved evidence and lasts until the schedule is replaced or the assignment closes.</p>
+            <p>Assignment {s.assignmentId} · Runner {s.runnerId}</p>
+            {(['accept','decline'] as const).map(decision => <button key={decision} disabled={!online} onClick={async () => {
+              try { await post('/api/schedules/' + s.id, { decision }); setError(''); await refresh(); }
+              catch (e) { setError(e instanceof Error ? e.message : 'Decision could not be saved'); }
+            }}>{decision === 'accept' ? 'Allow recurring reports' : 'Decline schedule'}</button>)}</section>)}
         {snapshot.grants.filter((grant) => dm.administrator || grant.conversationId === dm.id).map((grant) => <section className="approval" key={grant.id}>
           <h2>Reporting access requested</h2><p>{grant.name} needs the local runner and the read-only usage tool for its on-demand reporting assignment. The tool reads local Codex and Claude activity and returns aggregate counts and coverage.</p>
           <div>{(['assignment', 'run', 'decline'] as const).map((choice) => <button key={choice} disabled={!online} onClick={async () => {

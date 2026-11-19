@@ -35,11 +35,11 @@ test('upgrade deployed schema with paired browser, prior messages and provider t
     try {
       assert.equal(server.session('synthetic-browser'),session);
       assert.equal(server.setup('synthetic').conversationId,dm);
-      assert.equal(server.db.prepare('SELECT count(*) FROM definition_history').pluck().get(),2);
+      assert.equal(server.db.prepare('SELECT count(*) FROM definition_history').pluck().get(),3);
       assert.deepEqual(local.session(assignment), { thread_id: 'synthetic-thread', thread_configuration: null });
       server.send(session,{ commandId: randomUUID(), text: 'Continue' });
       const dispatch = server.nextDispatch(runner)!;
-      assert.equal(dispatch.context.definitionVersion,2); assert.equal(dispatch.context.administrator,true);
+      assert.equal(dispatch.context.definitionVersion,3); assert.equal(dispatch.context.administrator,true);
       assert.equal(dispatch.context.messages[0]?.text,'Earlier result');
       assert.deepEqual(server.db.pragma('foreign_key_check'),[]);
     } finally { server.close(); local.close(); }
@@ -108,6 +108,15 @@ test('durable setup, narrowed access, scoped reports, rejection, redelivery and 
     assert.deepEqual(follow.priorReport,evidence); assert.equal(follow.range,undefined);
     assert.equal(follow.assignmentId,report.assignmentId);
     done(follow.runId);
+    assert.equal(server.db.prepare('SELECT count(*) FROM report_preferences').pluck().get(), 0);
+    for (const [index, instruction] of ['Lead with coverage.', 'Lead with coverage, then show spend.'].entries()) {
+      server.send(browser.id, { commandId: randomUUID(), conversationId: created.conversationId, replyTo: answer, text: instruction + ' From now on.' });
+      const reply = start();
+      assert.equal(reply.preference?.revision, index || undefined);
+      runner.finish(reply.runId, { status: 'completed', message: 'Saved.', assignmentPreference: instruction }); deliver();
+    }
+    assert.deepEqual(server.db.prepare('SELECT revision,instructions FROM report_preferences WHERE assignment_id=? ORDER BY revision').all(report.assignmentId),
+      [{ revision: 1, instructions: 'Lead with coverage.' }, { revision: 2, instructions: 'Lead with coverage, then show spend.' }]);
     server.reporting.closeAssignment(created.conversationId,browser.id);
     assert.equal(server.reporting.grant(report.assignmentId,ids.runnerId,null),undefined);
     assert.throws(() => server.send(browser.id,{ commandId:randomUUID(),conversationId:created.conversationId,text:'After closure' }));

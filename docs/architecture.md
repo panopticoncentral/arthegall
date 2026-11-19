@@ -153,6 +153,8 @@ Schedule the same assignment to report the previous local calendar day's usage. 
 
 Exercise missed occurrences and confirm that the default produces one current report while recording the missed runs. Verify that explicit backfill follows the assignment's instructions and delivery retries preserve one copy of each result.
 
+The [milestone 3 operating notes and verification](milestone-3.md) describe schedule approval, Pacific due dates, assignment preferences, and the isolated upgrade exercise.
+
 ### Release verification
 
 During milestone 2 acceptance, the conversation displayed Markdown formatting characters as plain text. Render Markdown in conversation messages and verify in a browser that formatting survives a reload of the saved DM.

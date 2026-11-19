@@ -74,12 +74,16 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
     if (!model) throw new Error('No default provider configuration');
     return { rpc, model, permissionProfile, inherited: config.config.mcp_servers ?? {} };
   }
+  function runDirectory(context: Dispatch['context']) {
+    const assignment = join(options.workspaceRoot, context.assignmentId);
+    return context.occurrence ? join(assignment, 'runs', context.runId) : assignment;
+  }
   async function recover() {
     for (const run of store.interrupted()) {
       let outcome: Outcome = { status: 'blocked', message: `${run.text.slice(0, 28_000)}\n\nExecution was interrupted. Its effects are uncertain; review activity before retrying.`.trim() };
       if (run.thread_id && run.turn_id && run.outcome && !options.fake) {
         try {
-          const workspace = join(options.workspaceRoot, Dispatch.parse(JSON.parse(run.payload)).context.assignmentId);
+          const workspace = runDirectory(Dispatch.parse(JSON.parse(run.payload)).context);
           const connection = await provider(workspace);
           const turns = z.object({ data: z.array(z.object({ id: z.string(), status: z.string() })) }).parse(await connection.rpc.request('thread/turns/list', { threadId: run.thread_id, limit: 100 }));
           if (turns.data.some((turn) => turn.id === run.turn_id && turn.status === 'completed')) outcome = Outcome.parse(JSON.parse(run.outcome));
@@ -92,7 +96,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
   }
   async function execute(dispatch: Dispatch) {
     const { context } = dispatch;
-    const directory = join(options.workspaceRoot, context.assignmentId);
+    const directory = runDirectory(context);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const workspace = realpathSync(directory);
     if (options.fake) {
@@ -124,13 +128,13 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
       const approvalPolicy = exercise ? 'on-request' : 'never';
       const instructions = exercise
         ? `This is an explicitly enabled synthetic approval exercise. Use the shell tool with login=false to run exactly: ${command}. Request approval for the write. Do not try any other command, tool, or alternative operation after denial. Then report_outcome with a concise description of whether the write succeeded or was declined.`
-        : `${context.instructions}\n${context.access ? "Use read_context. For a requested range call read_usage and present both sources, date range, coverage, subtotals and unknowns. For a follow-up use priorReport from read_context as the selected report. Never estimate spend." : ""}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`;
+        : `${context.instructions}\n${context.access ? "Use read_context. For a requested range call read_usage and present both sources, date range, coverage, subtotals and unknowns. For a follow-up use priorReport from read_context as the selected report. Follow the assignmentInstructions and current preference from read_context when writing reports. On a report reply, if the user gives ongoing guidance, set assignmentPreference in report_outcome to the updated complete set of presentation preferences, retaining other applicable preferences. For a question about this report omit assignmentPreference. Never estimate spend." : ""}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`;
       if (exercise) store.publish(context.runId, { kind: 'activity', message: `Operator enabled a one-run synthetic approval exercise: ${command}. Scope: this assignment workspace; each native request requires an exact browser decision.` });
       const tools: string[] = [];
       const capabilities: { admin?: (op: AdminOperation) => Promise<unknown>; usage?: (range: DateRange) => Promise<UsageReport> } = {};
       let evidence: Promise<UsageReport> | undefined;
       if (context.administrator && !exercise) {
-        tools.push('create_reporting_assignment', 'revise_reporting_agent', 'run_usage_report');
+        tools.push('create_reporting_assignment', 'revise_reporting_agent', 'run_usage_report', 'schedule_usage_report');
         capabilities.admin = async (op) => {
           const id = store.requestOperation(context.runId, op);
           const deadline = Date.now() + 10_000;
@@ -169,10 +173,10 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         agentId: context.agentId, revision: context.definitionVersion, instructions: params.developerInstructions,
         base: params.baseInstructions, tools, approvalPolicy,
       })).digest('hex');
-      const saved = exercise ? undefined : store.session(context.assignmentId);
+      const saved = exercise || context.occurrence ? undefined : store.session(context.assignmentId);
       const priorThread = saved?.thread_configuration === configuration ? saved.thread_id : undefined;
       const thread = z.object({ thread: z.object({ id: z.string() }), model: z.string() }).parse(await connection.rpc.request(priorThread ? 'thread/resume' : 'thread/start', priorThread ? { ...params, threadId: priorThread, excludeTurns: true } : params));
-      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort, exercise ? undefined : configuration);
+      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort, exercise || context.occurrence ? undefined : configuration);
       if (saved && !priorThread) store.publish(context.runId, { kind: 'activity', message: 'Started a new Codex thread with current instructions and tools. Conversation history is available through read_context.' });
       store.publish(context.runId, { kind: 'activity', message: `Codex ${thread.model}; effort ${connection.model.defaultReasoningEffort}; definition ${context.definitionVersion}.` });
       let text = '', savedText = '';

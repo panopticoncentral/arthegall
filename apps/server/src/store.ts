@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { Decision, Delivery, Dispatch, ExecutionContext, OperationResult, SendMessage } from '../../../packages/contracts/src/index.js';
+import { Scheduler } from './scheduler.js';
 import { migrations } from './migrations.js';
 
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -15,10 +16,12 @@ const Run = z.object({ id: z.string(), assignment_id: z.string(), runner_id: z.s
 export class ServerStore {
   readonly db: Database.Database;
   readonly reporting: Reporting;
-  constructor(path: string) {
+  readonly scheduler: Scheduler;
+  constructor(path: string, private now = () => new Date()) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new Database(path);
     this.reporting = new Reporting(this.db);
+    this.scheduler = new Scheduler(this.db, this.reporting, now);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('synchronous = FULL');
@@ -96,7 +99,7 @@ export class ServerStore {
       return { runId };
     })();
   }
-  private enqueue(conversationId: string, text: string, range?: DateRange, replyTo?: string) {
+  private enqueue(conversationId: string, text: string, range?: DateRange, replyTo?: string, scheduled = false) {
     const { assignmentId, closed } = this.reporting.assignment(conversationId);
     if (closed) throw new Conflict('Assignment is closed');
     const runId = randomUUID(), userId = randomUUID(), assistantId = randomUUID(), runnerId = this.id('runner');
@@ -106,7 +109,12 @@ export class ServerStore {
         WHERE r.assistant_message_id=? AND r.assignment_id=? AND c.evidence IS NOT NULL AND r.state='completed'`).pluck().get(replyTo, assignmentId) as string | undefined;
       if (!parent) throw new Conflict('Choose a completed report in this DM');
     }
-    const needsAccess = assignmentId !== this.id('assignment') && !this.reporting.grant(assignmentId, runnerId, runId);
+    // A scheduled report's approved follow-up may read its saved evidence.
+    if (!parent && !range) parent = this.db.prepare(`SELECT r.id FROM runs r JOIN report_context c ON r.id=c.run_id
+      WHERE r.assignment_id=? AND r.state='completed' AND c.evidence IS NOT NULL ORDER BY r.rowid DESC LIMIT 1`).pluck().get(assignmentId) as string | undefined;
+    const recurringReply = parent && this.recurringAccess(parent, runnerId);
+    const needsAccess = assignmentId !== this.id('assignment') && !scheduled && !recurringReply
+      && !this.reporting.grant(assignmentId, runnerId, runId);
     const state = needsAccess ? 'awaiting_access' : 'queued';
     const insert = this.db.prepare('INSERT INTO messages(id,conversation_id,author,text,state) VALUES (?,?,?,?,?)');
     insert.run(userId, conversationId, 'user', text, 'complete');
@@ -117,6 +125,11 @@ export class ServerStore {
     this.db.prepare('INSERT INTO dispatches(id,run_id) VALUES (?,?)').run(randomUUID(), runId);
     this.event('message_accepted', { runId, assignmentId });
     return runId;
+  }
+  private recurringAccess(runId: string, runnerId: string) {
+    const id = this.db.prepare(`SELECT s.id FROM report_occurrences o JOIN report_schedules s ON s.id=o.schedule_id
+      WHERE o.run_id=? AND s.runner_id=? AND s.state='active'`).pluck().get(runId, runnerId);
+    return id ? { runnerId, approvalId: String(id), tool: 'read_usage' as const, duration: 'recurring' as const } : undefined;
   }
   adminOperation(runnerId: string, runId: string, input: unknown) {
     const op = AdminOperation.parse(input);
@@ -137,9 +150,12 @@ export class ServerStore {
       const agent = this.reporting.assignment(conversation);
       if (agent.closed) throw new Conflict('Assignment is closed');
       let reportRunId: string | undefined;
+      let scheduledApproval: boolean | undefined;
       if (op.tool === 'run_usage_report') {
-        const range = op.args.range ?? yesterday();
+        const range = op.args.range ?? yesterday(this.now());
         reportRunId = this.enqueue(conversation, `Report usage for ${range.start} through ${range.end} in America/Los_Angeles.`, range);
+      } else if (op.tool === 'schedule_usage_report') {
+        scheduledApproval = this.scheduler.propose(agent.assignmentId, runnerId, op.args.time, op.args.backfill ?? false, runId);
       } else if (op.tool === 'revise_reporting_agent') {
         this.reporting.revise(agent.agentId, op.args.instructions, runId);
       } else {
@@ -147,7 +163,7 @@ export class ServerStore {
         this.reporting.propose(agent.assignmentId, runnerId, runId);
       }
       const result = { name: agent.name, conversationId: conversation, assignmentId: agent.assignmentId, ...(reportRunId ? { reportRunId } : {}),
-        access: this.reporting.grant(agent.assignmentId, runnerId, null) ? 'approved' : 'requires browser approval' };
+        access: (scheduledApproval ?? Boolean(this.reporting.grant(agent.assignmentId, runnerId, null))) ? 'approved' : 'requires browser approval' };
       this.db.prepare('INSERT INTO admin_receipts VALUES (?,?,?)').run(runId, key, JSON.stringify(result));
       this.event('administrator_operation', { runId, tool: op.tool, ...result });
       return result;
@@ -155,7 +171,13 @@ export class ServerStore {
   }
   nextDispatch(runnerId: string): Dispatch | undefined {
     return this.db.transaction(() => {
-      const row = this.db.prepare("SELECT r.* FROM dispatches d JOIN runs r ON r.id=d.run_id JOIN messages m ON m.id=r.user_message_id WHERE r.runner_id=? AND r.state IN ('queued','accepted','running','approval') ORDER BY m.sequence LIMIT 1").get(runnerId);
+      const queued = this.db.prepare("SELECT r.* FROM dispatches d JOIN runs r ON r.id=d.run_id JOIN messages m ON m.id=r.user_message_id WHERE r.runner_id=? AND r.state IN ('queued','accepted','running','approval') ORDER BY m.sequence LIMIT 1");
+      let row = queued.get(runnerId);
+      if (!row) {
+        this.scheduler.materialize(runnerId, (conversation, period) => this.enqueue(conversation,
+          `Scheduled usage report for ${period} in America/Los_Angeles.`, { start: period, end: period }, undefined, true));
+        row = queued.get(runnerId);
+      }
       if (!row) return;
       const run = Run.parse(row);
       const delivery = z.object({ id: z.string(), payload: z.string().nullable() }).parse(this.db.prepare('SELECT id,payload FROM dispatches WHERE run_id=?').get(run.id));
@@ -168,7 +190,11 @@ export class ServerStore {
         if (!this.db.prepare('SELECT 1 FROM grants WHERE assignment_id=? AND runner_id=?').get(run.assignment_id, runnerId)) throw new Conflict('Bootstrap grant missing');
         authority = { administrator: true };
       } else {
-        const access = this.reporting.grant(run.assignment_id, runnerId, run.id);
+        const details = this.db.prepare('SELECT requested_range,reply_to FROM report_context WHERE run_id=?').get(run.id) as { requested_range: string | null; reply_to: string | null };
+        const occurrence = this.db.prepare('SELECT due_date AS dueDate,due_at,schedule_id AS scheduleId FROM report_occurrences WHERE run_id=?')
+          .get(run.id) as { dueDate: string; due_at: number; scheduleId: string } | undefined;
+        const recurring = this.recurringAccess(details.reply_to ?? run.id, runnerId);
+        const access = occurrence ? recurring : recurring ?? this.reporting.grant(run.assignment_id, runnerId, run.id);
         if (!access) {
           this.db.prepare("UPDATE runs SET state='awaiting_access' WHERE id=?").run(run.id);
           this.db.prepare("UPDATE messages SET state='awaiting_access' WHERE id=?").run(run.assistant_message_id);
@@ -176,14 +202,19 @@ export class ServerStore {
           return;
         }
         if (access.duration === 'run') this.db.prepare('UPDATE report_access SET used_by=? WHERE id=?').run(run.id, access.approvalId);
-        const details = this.db.prepare('SELECT requested_range,reply_to FROM report_context WHERE run_id=?').get(run.id) as { requested_range: string | null; reply_to: string | null };
         const previous = this.db.prepare(`SELECT c.run_id,c.evidence FROM report_context c JOIN runs r ON r.id=c.run_id
           JOIN messages m ON m.id=r.user_message_id WHERE r.assignment_id=? AND c.evidence IS NOT NULL
           AND r.state='completed' AND (c.run_id=? OR ? IS NULL) AND m.sequence<(SELECT sequence FROM messages WHERE id=?)
           ORDER BY m.sequence DESC LIMIT 1`).get(run.assignment_id, details.reply_to, details.reply_to, run.user_message_id) as { run_id: string; evidence: string } | undefined;
         if (previous && !details.requested_range) this.db.prepare('UPDATE report_context SET reply_to=? WHERE run_id=?').run(previous.run_id, run.id);
-        authority = { access, assignmentInstructions: agent.assignmentInstructions!, ...(details.requested_range ? { range: JSON.parse(details.requested_range) } : {}),
-          ...(previous && !details.requested_range ? { priorReport: JSON.parse(previous.evidence) } : {}) };
+        const preference = this.db.prepare('SELECT revision,instructions FROM report_preferences WHERE assignment_id=? ORDER BY revision DESC LIMIT 1')
+          .get(run.assignment_id) as ExecutionContext['preference'];
+        authority = { access, assignmentInstructions: agent.assignmentInstructions! };
+        if (preference) authority.preference = preference;
+        if (occurrence) authority.occurrence = { scheduleId: occurrence.scheduleId, dueDate: occurrence.dueDate,
+          dueAt: new Date(occurrence.due_at).toISOString() };
+        if (details.requested_range) authority.range = JSON.parse(details.requested_range);
+        else if (previous) authority.priorReport = JSON.parse(previous.evidence);
       }
       const messages = z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string() })).parse(this.db.prepare("SELECT author AS role,text FROM (SELECT * FROM messages WHERE conversation_id=? AND sequence <= (SELECT sequence FROM messages WHERE id=?) AND text != '' ORDER BY sequence DESC LIMIT 40) ORDER BY sequence").all(conversation, run.user_message_id));
       let remaining = 32_000;
@@ -193,7 +224,7 @@ export class ServerStore {
         remaining -= text.length;
         return [{ ...message, text }];
       }).reverse();
-      const context = ExecutionContext.parse({ ...authority, agentId: agent.agentId, assignmentId: run.assignment_id, runId: run.id, definitionVersion: agent.revision, instructions: agent.instructions, messages: bounded });
+      const context = ExecutionContext.parse({ ...authority, agentId: agent.agentId, assignmentId: run.assignment_id, runId: run.id, definitionVersion: agent.revision, instructions: agent.instructions, messages: authority.occurrence ? bounded.slice(-1) : bounded });
       const dispatch = Dispatch.parse({ type: 'dispatch', version: 1, dispatchId: delivery.id, context });
       this.db.prepare('UPDATE dispatches SET payload=? WHERE id=?').run(JSON.stringify(dispatch), delivery.id);
       return dispatch;
@@ -244,6 +275,14 @@ export class ServerStore {
       } else if (event.kind === 'outcome') {
         if (event.outcome.status === 'completed' && this.db.prepare('SELECT 1 FROM report_context WHERE run_id=? AND requested_range IS NOT NULL AND evidence IS NULL').get(run.id))
           throw new Conflict('Missing report evidence');
+        if (event.outcome.assignmentPreference) {
+          const reply = this.db.prepare('SELECT reply_to FROM report_context WHERE run_id=? AND requested_range IS NULL').pluck().get(run.id);
+          if (!reply || event.outcome.status !== 'completed') throw new Conflict('A completed report reply is required to update assignment memory');
+          this.db.prepare(`INSERT INTO report_preferences(assignment_id,revision,instructions,source_run)
+            SELECT ?,COALESCE(MAX(revision),0)+1,?,? FROM report_preferences WHERE assignment_id=?`)
+            .run(run.assignment_id, event.outcome.assignmentPreference, run.id, run.assignment_id);
+          this.event('assignment_preference_saved', { assignmentId: run.assignment_id, sourceRun: run.id, reportRun: reply });
+        }
         this.db.prepare('UPDATE messages SET text=?,state=? WHERE id=?').run(event.outcome.message, event.outcome.status, run.assistant_message_id);
         this.db.prepare('UPDATE runs SET state=? WHERE id=?').run(event.outcome.status, run.id);
         this.db.prepare("UPDATE approvals SET decision=COALESCE(decision,'decline'),acknowledged=1 WHERE run_id=?").run(run.id);
@@ -286,6 +325,9 @@ export class ServerStore {
   snapshot() {
     return this.db.transaction(() => ({
       conversations: this.db.prepare(`SELECT c.id,a.name,(a.id=?) AS administrator,COALESCE(ra.closed,0) AS closed FROM conversations c JOIN agents a ON a.id=c.agent_id JOIN assignments s ON s.conversation_id=c.id LEFT JOIN reporting_assignments ra ON ra.assignment_id=s.id ORDER BY administrator DESC,c.rowid`).all(this.id('administrator')),
+      schedules: this.db.prepare(`SELECT p.id,p.assignment_id AS assignmentId,p.runner_id AS runnerId,p.time,p.backfill,p.state,
+        s.conversation_id AS conversationId,a.name FROM report_schedules p JOIN assignments s ON s.id=p.assignment_id
+        JOIN conversations c ON c.id=s.conversation_id JOIN agents a ON a.id=c.agent_id WHERE p.state IN ('pending','active')`).all(),
       grants: this.db.prepare(`SELECT p.id,a.name,s.conversation_id AS conversationId FROM report_access p JOIN assignments s ON s.id=p.assignment_id
         JOIN conversations c ON c.id=s.conversation_id JOIN agents a ON a.id=c.agent_id WHERE p.decision IS NULL`).all(),
       messages: this.db.prepare(`SELECT m.id,m.conversation_id AS conversationId,m.author,m.text,m.state,

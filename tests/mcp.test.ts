@@ -77,6 +77,7 @@ test('report tools follow the bound role, runner grant and exact period', async 
         await client.connect(new StreamableHTTPClientTransport(new URL(service.url), { requestInit: { headers: { Authorization: 'Bearer ' + binding.token } } }));
         const names = (await client.listTools()).tools.map((tool) => tool.name);
         assert.equal(names.includes('read_usage'), 'range' in extra);
+        assert.equal(names.includes('schedule_usage_report'), 'administrator' in extra);
         assert.equal(names.includes('run_usage_report'), 'administrator' in extra);
         assert.equal(names.includes('create_reporting_assignment'), 'administrator' in extra);
         assert.equal((await client.callTool({ name: 'read_usage', arguments: { ...range, start: '2020-01-01' } })).isError,true);

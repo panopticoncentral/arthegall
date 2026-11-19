@@ -1,4 +1,4 @@
-import { administratorInstructions } from './reporting.js';
+import { administratorInstructions, onDemandAdministratorInstructions } from './reporting.js';
 
 export const migrations = [{ version: 1, sql: `
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -26,7 +26,7 @@ CREATE TABLE definition_history (
   agent_id TEXT NOT NULL REFERENCES agents(id), revision INTEGER NOT NULL, instructions TEXT NOT NULL,
   source_run TEXT REFERENCES runs(id), PRIMARY KEY(agent_id,revision));
 INSERT INTO definition_history SELECT id,revision,instructions,NULL FROM agents;
-UPDATE agents SET revision=revision+1,instructions='${administratorInstructions.replaceAll("'", "''")}'
+UPDATE agents SET revision=revision+1,instructions='${onDemandAdministratorInstructions.replaceAll("'", "''")}'
   WHERE id=(SELECT value FROM metadata WHERE key='administrator');
 INSERT OR IGNORE INTO definition_history SELECT id,revision,instructions,NULL FROM agents;
 CREATE TABLE reporting_assignments (
@@ -42,4 +42,24 @@ CREATE TABLE report_context (
   run_id TEXT PRIMARY KEY REFERENCES runs(id), requested_range TEXT, reply_to TEXT REFERENCES runs(id), evidence TEXT);
 CREATE TABLE admin_receipts (
   run_id TEXT NOT NULL REFERENCES runs(id), operation TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(run_id,operation));
+` }, { version: 3, sql: `
+UPDATE agents SET revision=revision+1,instructions='${administratorInstructions.replaceAll("'", "''")}'
+  WHERE id=(SELECT value FROM metadata WHERE key='administrator');
+INSERT OR IGNORE INTO definition_history SELECT id,revision,instructions,NULL FROM agents;
+
+CREATE TABLE report_schedules (
+  id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL REFERENCES reporting_assignments(assignment_id),
+  runner_id TEXT NOT NULL REFERENCES runners(id), time TEXT NOT NULL, backfill INTEGER NOT NULL,
+  source_run TEXT NOT NULL REFERENCES runs(id), state TEXT NOT NULL CHECK(state IN ('pending','active','retired','declined')),
+  session_id TEXT REFERENCES browser_sessions(id), next_date TEXT, next_due INTEGER);
+CREATE UNIQUE INDEX schedule_pending ON report_schedules(assignment_id) WHERE state='pending';
+CREATE UNIQUE INDEX schedule_active ON report_schedules(assignment_id) WHERE state='active';
+CREATE TABLE report_occurrences (
+  assignment_id TEXT NOT NULL REFERENCES assignments(id), due_date TEXT NOT NULL, due_at INTEGER NOT NULL,
+  period TEXT NOT NULL, schedule_id TEXT NOT NULL REFERENCES report_schedules(id),
+  run_id TEXT UNIQUE REFERENCES runs(id), PRIMARY KEY(assignment_id,due_date));
+CREATE TABLE report_preferences (
+  assignment_id TEXT NOT NULL REFERENCES reporting_assignments(assignment_id), revision INTEGER NOT NULL,
+  instructions TEXT NOT NULL, source_run TEXT UNIQUE NOT NULL REFERENCES report_context(run_id),
+  PRIMARY KEY(assignment_id,revision));
 ` }];

@@ -2,9 +2,9 @@
 
 A control plane for persistent agents and assignments, with conversations at the center and provider sessions managed by runners.
 
-The administrator can create a Codex reporting agent, request scoped access to the local runner and usage tool, and queue an on-demand report. The reporter delivers the result to its own DM and can answer follow-ups about a selected report. The owner has confirmed pairing and use from a second device over private HTTPS.
+The administrator can create a Codex reporting agent, request scoped access to the local runner and usage tool, and queue an on-demand report. A separate browser approval enables daily Pacific reports with catch-up or explicit backfill. The reporter delivers results to its own DM and can answer follow-ups about a selected report. The owner has confirmed pairing and use from a second device over private HTTPS.
 
-See [reporting and coverage](docs/milestone-2.md), [macOS installation](docs/macos-installation.md), [design](docs/design.md), [architecture](docs/architecture.md), and [milestone 1 verification](docs/milestone-1-progress.md).
+See [daily reports and preferences](docs/milestone-3.md), [reporting and coverage](docs/milestone-2.md), [macOS installation](docs/macos-installation.md), [design](docs/design.md), [architecture](docs/architecture.md), and [milestone 1 verification](docs/milestone-1-progress.md).
 
 ## Run locally
 
@@ -47,7 +47,7 @@ Live checks use the configured Codex account and make model calls:
 
 ```sh
 npm run probe:codex
-ARTHEGALL_LIVE_CODEX=1 npm exec playwright test -- tests/live.spec.ts tests/reporting.spec.ts
+ARTHEGALL_LIVE_CODEX=1 npm exec playwright test -- tests/live.spec.ts tests/reporting.spec.ts tests/scheduled.spec.ts
 ```
 
 The native probe is currently macOS-specific. It validates permission boundaries, thread resume, MCP identity, approvals for exact synthetic file writes, interruption, and provider-exit recovery. The browser live check validates conversation continuity, real approve/reject decisions, and active-stream refresh through both application processes. Avoid running two Playwright commands against the same output directory at once; use `--output` to separate their artifacts.

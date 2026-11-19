@@ -30,4 +30,4 @@ Both agents use Codex. A reporting definition has numbered revisions and one on-
 
 The milestone 1 upgrade retains browser sessions, IDs, queued deliveries, messages and provider-thread mappings. Server and runner stores migrate independently. Before upgrading a deployed pair, stop both jobs, back up both private SQLite databases using the SQLite backup API, check integrity, and retain the prior package, job definitions and private configuration together for recovery.
 
-Scheduling, catch-up, backfill and recurring presentation preferences belong to milestone 3.
+Daily scheduling and recurring presentation preferences are described in [milestone 3](milestone-3.md).

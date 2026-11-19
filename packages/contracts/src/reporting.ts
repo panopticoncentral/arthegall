@@ -31,13 +31,18 @@ const name = z.string().trim().min(1).max(64).regex(/^[\p{L}\p{N}][\p{L}\p{N} ._
 export const Definition = z.strictObject({ name, instructions: z.string().trim().min(1).max(2000) });
 export const CreateAssignment = Definition.extend({ assignment: z.string().trim().min(1).max(2000).optional() });
 export const ReportRequest = z.strictObject({ name, range: DateRange.optional() });
+export const ScheduleRequest = z.strictObject({
+  name, time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), backfill: z.boolean().optional(),
+});
+export const Preference = z.string().trim().min(1).max(2000);
 export const AdminOperation = z.discriminatedUnion('tool', [
   z.strictObject({ tool: z.literal('create_reporting_assignment'), args: CreateAssignment }),
   z.strictObject({ tool: z.literal('revise_reporting_agent'), args: Definition }),
+  z.strictObject({ tool: z.literal('schedule_usage_report'), args: ScheduleRequest }),
   z.strictObject({ tool: z.literal('run_usage_report'), args: ReportRequest }),
 ]);
 export type AdminOperation = z.infer<typeof AdminOperation>;
 export const ReportAccess = z.strictObject({
-  runnerId: z.uuid(), approvalId: z.uuid(), duration: z.enum(['run', 'assignment']),
+  runnerId: z.uuid(), approvalId: z.uuid(), duration: z.enum(['run', 'assignment', 'recurring']),
   tool: z.literal('read_usage'),
 });

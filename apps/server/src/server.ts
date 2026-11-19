@@ -95,6 +95,12 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     store.reporting.closeAssignment(id, store.session(request.cookies.arthegall ?? '')!);
     return { saved: true };
   });
+  app.post('/api/schedules/:id', async (request) => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const { decision } = z.strictObject({ decision: z.enum(['accept','decline']) }).parse(request.body);
+    store.scheduler.decide(id, store.session(request.cookies.arthegall ?? '')!, decision === 'accept');
+    return { saved: true };
+  });
   app.post('/api/access/:id', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { decision, duration } = z.strictObject({ decision: z.enum(['accept','decline']), duration: z.enum(['run','assignment']) }).parse(request.body);

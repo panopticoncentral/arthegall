@@ -8,7 +8,7 @@ const root = process.argv[2]!;
 const mode = () => existsSync(join(root, 'mode')) ? readFileSync(join(root, 'mode'), 'utf8') : 'complete';
 const send = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let config: { mcp_servers: { arthegall: { url: string; http_headers: Record<string, string> } } };
-const threadId = mode() === 'reporting' ? 'synthetic-' + process.cwd().split(/[\\/]/).at(-1) : 'synthetic-thread';
+const threadId = ['reporting', 'scheduled'].includes(mode()) ? 'synthetic-' + process.cwd().split(/[\\/]/).at(-1) : 'synthetic-thread';
 const lines = createInterface({ input: process.stdin });
 process.stdin.on('end', () => process.exit(0));
 process.stdout.on('error', () => process.exit(0));
@@ -45,6 +45,14 @@ lines.on('line', (line) => { void (async () => {
       };
       const context = await call('read_context', {});
       let message = 'Synthetic durable result';
+      let assignmentPreference: string | undefined;
+      if (mode() === 'scheduled') {
+        if (context.administrator) await call('schedule_usage_report', { name: 'Rowan', time: '08:00' });
+        else if (context.range) {
+          const report = await call('read_usage', context.range);
+          message = (context.preference ? 'Source coverage: local records. ' : '') + 'Synthetic total: ' + report.codex.total;
+        } else { assignmentPreference = 'Put source coverage first.'; message = 'Saved your preference.'; }
+      }
       if (mode() === 'reporting') {
         if (context.administrator) {
           await call('create_reporting_assignment', { name: 'Rowan', instructions: 'Report usage' });
@@ -55,7 +63,7 @@ lines.on('line', (line) => { void (async () => {
         } else message = 'Synthetic cached input: ' + context.priorReport.codex.cachedInput;
       }
       send({ method: 'item/agentMessage/delta', params: { threadId, delta: 'Synthetic durable result' } });
-      await client.callTool({ name: 'report_outcome', arguments: { status: 'completed', message } });
+      await client.callTool({ name: 'report_outcome', arguments: { status: 'completed', message, ...(assignmentPreference ? { assignmentPreference } : {}) } });
       await client.close();
       writeFileSync(join(root, 'completed'), 'completed');
       if (mode() !== 'hold-completion') send({ method: 'turn/completed', params: { threadId, turn: { id: 'synthetic-turn', status: 'completed' } } });
