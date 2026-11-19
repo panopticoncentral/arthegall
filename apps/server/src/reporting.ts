@@ -24,6 +24,19 @@ export class Reporting {
   find(name: string) {
     return this.db.prepare('SELECT c.id FROM conversations c JOIN agents a ON a.id=c.agent_id WHERE a.name=? COLLATE NOCASE').pluck().get(name) as string | undefined;
   }
+  settings(conversationId: string) {
+    const agent = this.assignment(conversationId);
+    if (!agent.assignmentInstructions) throw new Conflict('Select a reporting agent');
+    return {
+      ...agent,
+      history: this.db.prepare('SELECT revision,instructions FROM definition_history WHERE agent_id=? ORDER BY revision DESC').all(agent.agentId),
+      preference: this.db.prepare(`SELECT p.instructions,r.user_message_id AS messageId FROM report_preferences p
+        JOIN runs r ON r.id=p.source_run WHERE p.assignment_id=? ORDER BY p.revision DESC LIMIT 1`).get(agent.assignmentId) ?? null,
+      access: agent.closed ? [] : this.db.prepare(`SELECT duration,used_by AS usedBy FROM report_access
+        WHERE assignment_id=? AND decision='accept' AND (used_by IS NULL OR used_by IN
+        (SELECT id FROM runs WHERE state IN ('queued','accepted','running','approval'))) ORDER BY rowid DESC`).all(agent.assignmentId),
+    };
+  }
   create(name: string, instructions: string, assignment: string, source: string) {
     const agentId = randomUUID(), conversationId = randomUUID(), assignmentId = randomUUID();
     this.db.prepare('INSERT INTO agents VALUES (?,1,?,?)').run(agentId, name, instructions);
@@ -51,10 +64,11 @@ export class Reporting {
       this.event('reporting_assignment_closed', { assignmentId, sessionId });
     })();
   }
-  revise(agentId: string, instructions: string, source: string) {
-    this.db.prepare('UPDATE agents SET revision=revision+1,instructions=? WHERE id=? AND instructions!=?').run(instructions, agentId, instructions);
+  revise(agentId: string, instructions: string, source: string | null, sessionId?: string) {
+    const update = this.db.prepare('UPDATE agents SET revision=revision+1,instructions=? WHERE id=? AND instructions!=?').run(instructions, agentId, instructions);
+    if (!update.changes) return;
     this.db.prepare('INSERT OR IGNORE INTO definition_history SELECT id,revision,instructions,? FROM agents WHERE id=?').run(source, agentId);
-    this.event('definition_revised', { agentId, source });
+    this.event('definition_revised', { agentId, source, sessionId });
   }
   grant(assignment: string, runner: string, run: string | null) {
     const row = this.db.prepare(`SELECT id AS approvalId,runner_id AS runnerId,duration,'read_usage' AS tool FROM report_access

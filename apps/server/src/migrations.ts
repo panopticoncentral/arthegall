@@ -86,4 +86,8 @@ CREATE TRIGGER close_run_history AFTER UPDATE OF state ON runs WHEN new.state='c
 END;
 CREATE INDEX history_expiration ON run_history(pinned,phase,closed_at);
 CREATE INDEX receipts_by_run ON delivery_receipts(runner_id,json_extract(payload,'$.runId'));
+` }, { version: 6, sql: `
+ALTER TABLE report_schedules ALTER COLUMN source_run DROP NOT NULL;
+ALTER TABLE report_schedules ADD COLUMN proposed_by TEXT REFERENCES browser_sessions(id)
+  CHECK ((source_run IS NULL) != (proposed_by IS NULL));
 ` }];

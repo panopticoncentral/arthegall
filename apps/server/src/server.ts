@@ -8,6 +8,7 @@ import { BackupSettings, RetentionDays, RunnerFrame, SendMessage, Snapshot } fro
 import type { DailyBackups } from '../../../scripts/daily-backups.js';
 import type { Scan } from './restore-recovery.js';
 import { Conflict, ServerStore } from './store.js';
+import { EditDefinition, ReportingSettings, ScheduleRequest } from '../../../packages/contracts/src/reporting.js';
 
 export async function createServer(store: ServerStore, origin: string, webRoot?: string, backups?: DailyBackups) {
   const expected = new URL(origin);
@@ -91,7 +92,10 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     reply.setCookie('arthegall', session.token, { path: '/', httpOnly: true, sameSite: 'strict', secure: expected.protocol === 'https:', maxAge: 365 * 24 * 60 * 60 });
     return { paired: true };
   });
-  app.get('/api/snapshot', async () => Snapshot.parse({ ...store.snapshot(), backups: backups?.status(), runnerConnected: [...runners.values()].some((runner) => runner.ready) }));
+  app.get('/api/snapshot', async request => Snapshot.parse({ ...store.snapshot(), backups: backups?.status(),
+    pairings: store.db.prepare('SELECT expires,id=? AS current FROM browser_sessions WHERE expires>? AND revoked=0 ORDER BY current DESC,expires DESC')
+      .all(store.session(request.cookies.arthegall ?? ''), Date.now()),
+    runnerConnected: [...runners.values()].some((runner) => runner.ready) }));
   app.get('/api/activity', async (request) => {
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
     return store.events(query.after);
@@ -123,6 +127,40 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   const checkApprovalChanges = async () => {
     if (store.recovery.paused()) throw new Conflict('Review runner records before changing approvals or assignments');
   };
+  app.get('/api/conversations/:id/settings', async request => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    return store.db.transaction(() => ReportingSettings.parse(store.reporting.settings(id)))();
+  });
+  app.post('/api/conversations/:id/definition', { preHandler: checkApprovalChanges }, async request => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const { revision, instructions } = EditDefinition.parse(request.body);
+    store.db.transaction(() => {
+      const agent = store.reporting.assignment(id);
+      if (!agent.assignmentInstructions || agent.closed) throw new Conflict('Select an open reporting assignment');
+      if (agent.instructions === instructions) return;
+      if (agent.revision !== revision) throw new Conflict('The agent definition has changed. Cancel to review the latest revision before editing.');
+      store.reporting.revise(agent.agentId, instructions, null, store.session(request.cookies.arthegall ?? ''));
+    })();
+    return { saved: true };
+  });
+  app.post('/api/conversations/:id/schedule', { preHandler: checkApprovalChanges }, async request => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const { time, activeId, backfill } = ScheduleRequest.pick({ time: true }).extend({ activeId: z.uuid().nullable(), backfill: z.boolean() }).parse(request.body);
+    store.db.transaction(() => {
+      const agent = store.reporting.assignment(id);
+      if (!agent.assignmentInstructions || agent.closed) throw new Conflict('Select an open reporting assignment');
+      const schedules = store.db.prepare("SELECT id,state,time,backfill FROM report_schedules WHERE assignment_id=? AND state IN ('active','pending')")
+        .all(agent.assignmentId) as { id: string; state: string; time: string; backfill: number }[];
+      const pending = schedules.find(s => s.state === 'pending');
+      const active = schedules.find(s => s.state === 'active');
+      if (pending?.time === time && Boolean(pending.backfill) === backfill) return;
+      if (!pending && active?.time === time && Boolean(active.backfill) === backfill) return;
+      if (pending || (active?.id ?? null) !== activeId) throw new Conflict('The schedule changed. Review the current schedule before proposing another change.');
+      const runnerId = store.db.prepare("SELECT value FROM metadata WHERE key='runner'").pluck().get() as string;
+      store.scheduler.propose(agent.assignmentId, runnerId, time, backfill, { sessionId: store.session(request.cookies.arthegall ?? '')! });
+    })();
+    return { saved: true };
+  });
   app.post('/api/retention', { preHandler: checkApprovalChanges }, async request => {
     const { days } = z.strictObject({days: RetentionDays}).parse(request.body);
     store.retention.configure(days);

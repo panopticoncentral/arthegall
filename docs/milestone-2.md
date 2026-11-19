@@ -14,7 +14,7 @@ In the **Administrator** DM, ask “Create a reporting agent named Rowan. Give R
 
 The access card names the agent, assignment, local runner, and read-only usage tool. **Allow for this assignment** covers its on-demand runs and follow-ups until closure. **Allow next run only** binds the grant to the first dispatched run, including redelivery of that dispatch. A subsequent run needs another approval. **Decline** blocks work waiting for that request. A queued report can complete while the browser is closed.
 
-Open **Rowan** under Direct messages. Expand **Recorded usage** for the saved aggregate evidence. **Reply to report** selects that report for the next question, even after newer reports arrive. An ordinary follow-up uses the most recent completed report in that assignment. Ask the administrator for another report or a revision to the agent’s instructions. In the reporter DM, **Connections → Close reporting assignment** ends access and preserves history. An in-flight run must finish first.
+Open **Rowan** under Direct messages. Expand **Recorded usage** for the saved aggregate evidence. **Reply to report** selects that report for the next question, even after newer reports arrive. An ordinary follow-up uses the most recent completed report in that assignment. Ask the administrator for another report or a revision to the agent’s instructions. In the reporter DM, **Assignment settings → Close reporting assignment** ends access and preserves history. An in-flight run must finish first.
 
 ## Figures and coverage
 

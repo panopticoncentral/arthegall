@@ -1,24 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { z } from 'zod';
-import { BackupControls } from './BackupControls.js';
+import { post, settingsPath } from './api.js';
+import { AccessRequests } from './AccessRequests.js';
 import { MessageMarkdown } from './MessageMarkdown.js';
 import './style.css';
 
 import { Snapshot } from '../../../packages/contracts/src/index.js';
+const Settings = lazy(() => import('./Settings.js'));
 
 const Pending = z.object({ commandId: z.string().uuid(), text: z.string(), conversationId: z.uuid().optional(), replyTo: z.uuid().optional() });
 type Pending = z.infer<typeof Pending>;
 function restorePending(): Pending | null {
   try { return Pending.parse(JSON.parse(sessionStorage.getItem('arthegall.pending') ?? 'null')); } catch { return null; }
-}
-async function post(path: string, data: unknown) {
-  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-  if (!response.ok) {
-    const error = z.object({ error: z.string() }).safeParse(await response.json());
-    throw new Error(error.success ? error.data.error : 'Request failed');
-  }
-  return response;
 }
 function RunHistory({run, disabled, refresh}: {run: Snapshot['runs'][number]; disabled: boolean; refresh: () => Promise<unknown>}) {
   const [error,setError] = useState('');
@@ -31,19 +25,6 @@ function RunHistory({run, disabled, refresh}: {run: Snapshot['runs'][number]; di
       <p>{run.history === 'pending' ? 'Cleanup awaiting runner confirmation' : 'Detailed execution history pruned'}</p>}
     {(error || run.historyError) && <p role="alert">{error || run.historyError}</p>}
   </details>;
-}
-function HistorySettings({days,disabled,refresh}: {days:number;disabled:boolean;refresh:()=>Promise<unknown>}) {
-  const [value,setValue] = useState(String(days)), [error,setError] = useState('');
-  return <section className="details backup-settings"><h2>Execution history</h2>
-    <p>Pin a run under its message’s Run details to keep its execution history and dedicated workspace. Reports and recorded usage stay in the DM.</p>
-    <form onSubmit={async e => {
-      e.preventDefault();
-      try { await post('/api/retention',{days:Number(value)}); setError(''); await refresh(); }
-      catch (err) { setError(err instanceof Error ? err.message : 'Retention could not be saved'); }
-    }}><label>Days to keep completed run details<input type="number" min="1" required value={value} onChange={e=>setValue(e.target.value)} /></label>
-    <button disabled={disabled || Number(value) === days}>Save history retention</button></form>
-    {error && <p role="alert">{error}</p>}
-  </section>;
 }
 function RecordedUsage({ report }: { report: NonNullable<Snapshot['messages'][number]['evidence']> }) {
   const number = (value: number | null) => value === null ? 'Unknown' : value.toLocaleString();
@@ -72,7 +53,16 @@ function App() {
   const [error, setError] = useState('');
   const [nav, setNav] = useState(false);
   const [activity, setActivity] = useState<string[] | null>(null);
-  const [connections, setConnections] = useState(false);
+  const [path, setPath] = useState(location.hash);
+  useEffect(() => {
+    const changed = () => { setPath(location.hash); setNav(false); setError(''); };
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
+  const settings = path.startsWith('#settings/');
+  function openSettings(target = '#settings/system') {
+    setNav(false); setError(''); location.hash = target;
+  }
   const cursor = useRef(0), socket = useRef<WebSocket | null>(null);
   const navButton = useRef<HTMLButtonElement>(null), composer = useRef<HTMLTextAreaElement>(null);
   const generation = useRef(0);
@@ -119,14 +109,20 @@ function App() {
   const schedule = snapshot?.schedules.find(s => s.conversationId === dm?.id && s.state === 'active');
   const messages = snapshot?.messages.filter((message) => message.conversationId === dm?.id) ?? [];
   const runsByMessage = new Map(snapshot?.runs.map(run => [run.messageId,run]));
-  function choose(id: string) {
+  function choose(id: string, messageId?: string) {
+    if ((pending || sending) && id !== dm?.id) return;
+    if (location.hash) { history.pushState(null, '', location.pathname + location.search); setPath(''); }
     if (id !== dm?.id) {
       sessionStorage.setItem('arthegall.draft.' + dm?.id, draft);
       setDraft(sessionStorage.getItem('arthegall.draft.' + id) ?? '');
       setReplyTo(undefined); sessionStorage.removeItem('arthegall.reply');
     }
     setSelected(id); sessionStorage.setItem('arthegall.dm', id);
-    setNav(false); setError(''); composer.current?.focus();
+    setNav(false); setError('');
+    requestAnimationFrame(() => {
+      if (messageId) document.getElementById('message-' + messageId)?.scrollIntoView({ block: 'center' });
+      else composer.current?.focus();
+    });
   }
   async function send() {
     const command = pending ?? { commandId: crypto.randomUUID(), text: draft.trim(), conversationId: dm?.id, replyTo };
@@ -154,30 +150,36 @@ function App() {
   return <div className="app">
     <aside className={nav ? 'rail visible' : 'rail'} aria-label="Conversation navigation" onKeyDown={(e) => { if (e.key === 'Escape') { setNav(false); navButton.current?.focus(); } }}>
       <div className="brand">a<span>Arthegall</span></div><p className="section-label">DIRECT MESSAGES</p>
-      {snapshot.conversations.map((item) => <button key={item.id} className={dm.id === item.id ? 'selected' : ''} aria-label={item.name} aria-current={dm.id === item.id ? 'page' : undefined} disabled={Boolean(pending) || sending} onClick={() => choose(item.id)}><span className="avatar small">{item.name.charAt(0)}</span>{item.name}</button>)}
-      <div className="rail-bottom"><button onClick={() => setConnections(!connections)}>Connections</button><span className="muted">Your agents, working together.</span></div>
+      {snapshot.conversations.map((item) => <button key={item.id} className={!settings && dm.id === item.id ? 'selected' : ''} aria-label={item.name} aria-current={!settings && dm.id === item.id ? 'page' : undefined} disabled={Boolean(pending) || sending} onClick={() => choose(item.id)}><span className="avatar small">{item.name.charAt(0)}</span>{item.name}</button>)}
+      <div className={settings ? 'rail-settings' : 'rail-bottom'}>
+        <button onClick={() => openSettings()}>Settings</button>
+        {settings && <nav aria-label="Settings directory" onClick={e => { if (e.target instanceof HTMLAnchorElement) setNav(false); }}>
+          <a href="#settings/system" aria-label="System settings" aria-current={path === '#settings/system' ? 'page' : undefined}>System</a>
+          <a href="#settings/agents" aria-label="Reporting agent directory" aria-current={path === '#settings/agents' ? 'page' : undefined}>Agents</a>
+          {snapshot.conversations.filter(item => !item.administrator).map(item => <div key={item.id}>
+            <a href={settingsPath(item.id)} aria-label={'Settings for ' + item.name} aria-current={path === settingsPath(item.id) ? 'page' : undefined}>{item.name}</a>
+            <a href={settingsPath(item.id,'assignment')} aria-label={'Assignment for ' + item.name} aria-current={path === settingsPath(item.id,'assignment') ? 'page' : undefined}>Usage report</a>
+          </div>)}
+        </nav>}
+      </div>
     </aside>
     <main className="conversation">
-      <header><button className="nav-toggle" ref={navButton} aria-expanded={nav} aria-label="Open conversations" onClick={() => setNav(!nav)}>☰</button><div className="avatar">{dm.name.charAt(0)}</div><div><h1>{dm.name}</h1><p className="muted">{dm.administrator ? 'Setup and coordination' : dm.closed ? 'Closed reporting assignment' : schedule ? `Daily usage reporting · ${schedule.time} Pacific` : 'On-demand usage reporting'}</p></div><button className="activity-toggle" aria-expanded={activity !== null} onClick={async () => {
+      <header><button className="nav-toggle" ref={navButton} aria-expanded={nav} aria-label="Open conversations" onClick={() => setNav(!nav)}>☰</button>{settings ? <strong>Settings</strong> : <><div className="avatar">{dm.name.charAt(0)}</div><div><h1>{dm.name}</h1>{dm.administrator ? <p className="muted">Setup and coordination</p> : <a href={settingsPath(dm.id,'assignment')} className="settings-link" aria-label="Assignment settings">{dm.closed ? 'Closed reporting assignment' : schedule ? `Daily usage reporting · ${schedule.time} Pacific` : 'On-demand usage reporting'}</a>}</div>
+      {!dm.administrator && <a className="agent-shortcut" href={settingsPath(dm.id)}>Agent settings</a>}<button className="activity-toggle" aria-expanded={activity !== null} onClick={async () => {
         if (activity) { setActivity(null); return; }
         try {
           const response = await fetch('/api/activity');
           const rows = z.array(z.object({ kind: z.string(), data: z.string() })).parse(await response.json());
           setActivity(rows.map((row) => { const data = z.object({ message: z.string().optional() }).safeParse(JSON.parse(row.data)); return data.success && data.data.message ? data.data.message : row.kind.replaceAll('_', ' '); }));
         } catch { setError('Activity is temporarily unavailable'); }
-      }}>Activity</button></header>
-      <div className="status" role="status"><span className={status === 'Connected' ? 'dot connected' : 'dot'} />{status}{!snapshot.runnerConnected && snapshot.runs.some((run) => ['accepted', 'running', 'approval'].includes(run.state)) && ' · Existing work has an unknown outcome'}</div>
+      }}>Activity</button></>}</header>
+      <div className="status" role="status"><span className={status === 'Connected' ? 'dot connected' : 'dot'} />{status}{!snapshot.runnerConnected && snapshot.runs.some((run) => ['accepted', 'running', 'approval'].includes(run.state)) && ' · Existing work has an unknown outcome'}{!settings && status !== 'Connected' && <a href="#settings/system">System settings</a>}</div>
       {snapshot.backups?.enabled && snapshot.backups.error && <div className="details" role="alert">
         <strong>Daily backup needs attention</strong><p>{snapshot.backups.error}</p>
-        {!connections && <button onClick={() => setConnections(true)}>Open backup settings</button>}
+        {path !== '#settings/system' && <button onClick={() => openSettings()}>Open backup settings</button>}
       </div>}
-      {connections && <HistorySettings key={snapshot.retentionDays} days={snapshot.retentionDays} disabled={!online || Boolean(snapshot.recovery)} refresh={refresh} />}
-      {connections && snapshot.backups && <BackupControls key={JSON.stringify([snapshot.backups.destination,snapshot.backups.keep,snapshot.backups.enabled])}
-        status={snapshot.backups} online={online} paused={Boolean(snapshot.recovery)}
-        save={async (destination,keep,enabled) => { await post('/api/backups/settings',{destination,keep,enabled}); await refresh(); }}
-        retry={async () => { await post('/api/backups/retry',{}); await refresh(); }} />}
       {snapshot.recovery && <section className="approval" aria-label="Restore recovery">
-        <h2>Dispatch paused after restore</h2>
+        <h2>Dispatch paused after restore</h2>{!settings && <a href="#settings/system">System settings</a>}
         {snapshot.recovery.runners.map(r => <p key={r.id}>Runner {r.id} · {r.status === 'offline' ? 'Offline — waiting for reconnect' : r.status === 'unsupported' ? 'Update the runner to check its durable records' : r.status === 'checking' ? 'Checking durable records' : 'Inventory checked'}</p>)}
         {snapshot.recovery.issues.map(issue => <p key={issue.runId}>Run {issue.runId} · {issue.reason}</p>)}
         {snapshot.recovery.ready && <p>All runner records agree. Dispatch can safely resume.</p>}
@@ -187,15 +189,16 @@ function App() {
             catch (e) { setError(e instanceof Error ? e.message : 'Recovery request failed'); }
           }}>{action === 'resume' ? 'Resume dispatch' : 'Check runners again'}</button>)}
       </section>}
-      {connections && <section className="details"><h2>Local runner</h2><p>{snapshot.runnerConnected ? 'Connected to the server' : 'Waiting for the runner to reconnect'}</p><p>Codex: {provider === 'sign_in_needed' ? 'Run codex login on the runner, then return here. Queued messages will wait.' : provider === 'ready' ? 'Ready' : 'Availability is checked when work starts.'}</p>{!dm.administrator && !dm.closed && <button disabled={Boolean(snapshot.recovery)} onClick={async () => {
-        if (!window.confirm('Close this reporting assignment and end its access? Its conversation and reports will remain available.')) return;
-        try { await post('/api/conversations/' + dm.id + '/close', {}); await refresh(); }
-        catch (e) { setError(e instanceof Error ? e.message : 'Could not close assignment'); }
-      }}>Close reporting assignment</button>}<button onClick={async () => { await post('/api/revoke', {}); await refresh(); }}>Unpair this browser</button></section>}
-      {activity && <section className="details" aria-label="Activity"><h2>Activity</h2><ol>{activity.map((line, index) => <li key={index}>{line}</li>)}</ol></section>}
+      {settings ? <>
+        {error && <p role="alert">{error}</p>}
+        <Suspense fallback={<p role="status">Loading settings…</p>}>
+          <Settings path={path} snapshot={snapshot} online={online} refresh={refresh} currentDM={dm.id}
+            navigationLocked={Boolean(pending) || sending} openDM={choose} />
+        </Suspense>
+      </> : <>{activity && <section className="details" aria-label="Activity"><h2>Activity</h2><ol>{activity.map((line, index) => <li key={index}>{line}</li>)}</ol></section>}
       <section className="messages" aria-label="Conversation messages">
         {messages.length === 0 && <div className="welcome"><h2>{dm.administrator ? 'Your administrator is here.' : 'Usage reports appear here.'}</h2><p>Start a conversation. Your history stays with Arthegall.</p></div>}
-        {messages.map((message) => <article key={message.id} className="message">
+        {messages.map((message) => <article id={'message-' + message.id} key={message.id} className="message">
           <span className={`avatar ${message.author === 'user' ? 'user' : ''}`}>{message.author === 'user' ? 'Y' : dm.name.charAt(0)}</span>
           <div>
             <strong>{message.requestedReport ? 'Report request' : message.author === 'user' ? 'You' : dm.name}</strong>
@@ -206,30 +209,17 @@ function App() {
             {message.evidence && <>
               <details className="original"><summary>Original message text</summary><pre>{message.text}</pre></details>
               <RecordedUsage report={message.evidence} />
+              <a className="settings-link report-settings" href={settingsPath(dm.id,'assignment')}>Assignment settings</a>
               <button type="button" disabled={Boolean(pending)} onClick={() => { setReplyTo(message.id); sessionStorage.setItem('arthegall.reply', message.id); composer.current?.focus(); }}>Reply to report</button>
             </>}
             {runsByMessage.has(message.id) && <RunHistory run={runsByMessage.get(message.id)!}
               disabled={!online || Boolean(snapshot.recovery)} refresh={refresh} />}
           </div>
         </article>)}
-        {snapshot.schedules.filter(s => (dm.administrator || s.conversationId === dm.id) && s.state === 'pending').map(s =>
-          <section className="approval" key={s.id}><h2>Recurring reporting access requested</h2>
-            <p>Allow {s.name} to use the local runner and read_usage for this reporting assignment every day at {s.time} America/Los_Angeles? Each report covers the previous Pacific calendar day.</p>
-            <p>{s.backfill ? 'After downtime, deliver every missed report.' : 'After downtime, deliver the latest report and record earlier missed dates.'} Access includes replies about saved evidence and lasts until the schedule is replaced or the assignment closes.</p>
-            <p>Assignment {s.assignmentId} · Runner {s.runnerId}</p>
-            {(['accept','decline'] as const).map(decision => <button key={decision} disabled={!online || Boolean(snapshot.recovery)} onClick={async () => {
-              try { await post('/api/schedules/' + s.id, { decision }); setError(''); await refresh(); }
-              catch (e) { setError(e instanceof Error ? e.message : 'Decision could not be saved'); }
-            }}>{decision === 'accept' ? 'Allow recurring reports' : 'Decline schedule'}</button>)}</section>)}
-        {snapshot.grants.filter((grant) => dm.administrator || grant.conversationId === dm.id).map((grant) => <section className="approval" key={grant.id}>
-          <h2>Reporting access requested</h2><p>{grant.name} needs the local runner and the read-only usage tool for its on-demand reporting assignment. The tool reads local Codex and Claude activity and returns aggregate counts and coverage.</p>
-          <div>{(['assignment', 'run', 'decline'] as const).map((choice) => <button key={choice} disabled={!online || Boolean(snapshot.recovery)} onClick={async () => {
-            try { await post('/api/access/' + grant.id, { decision: choice === 'decline' ? 'decline' : 'accept', duration: choice === 'run' ? 'run' : 'assignment' }); setError(''); await refresh(); }
-            catch (e) { setError(e instanceof Error ? e.message : 'Decision could not be saved'); }
-          }}>{choice === 'assignment' ? 'Allow for this assignment' : choice === 'run' ? 'Allow next run only' : 'Decline'}</button>)}</div></section>)}
+        <AccessRequests snapshot={snapshot} conversationId={dm.administrator ? undefined : dm.id} disabled={!online || Boolean(snapshot.recovery)} refresh={refresh} />
         {snapshot.approvals.filter((approval) => approval.conversationId === dm.id).map((approval) => <section className="approval" key={approval.id}><h2>Approval needed</h2><p>The agent is waiting for your decision on this operation.</p><pre>{approval.command}</pre><div><button className="primary" disabled={!online || Boolean(snapshot.recovery)} onClick={() => void decide(approval.id, 'accept')}>Approve once</button><button disabled={!online || Boolean(snapshot.recovery)} onClick={() => void decide(approval.id, 'decline')}>Decline</button></div></section>)}
       </section>
-      <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>{replyTo && <p>Replying to the report for {messages.find((m) => m.id === replyTo)?.evidence?.range.start} <button type="button" onClick={() => { setReplyTo(undefined); sessionStorage.removeItem('arthegall.reply'); }}>Cancel reply</button></p>}<label htmlFor="message">Message {dm.name}</label><textarea id="message" ref={composer} value={pending?.text ?? draft} disabled={Boolean(pending || dm.closed)} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder={`Message ${dm.name}…`} rows={3} maxLength={16000} /><div className="composer-footer"><span className="muted">{!online ? 'Your draft is kept here until the server reconnects.' : pending ? 'Retry uses the same message to prevent duplicates.' : 'Enter to send · Shift + Enter for a new line'}</span><button className="primary" disabled={Boolean(dm.closed) || !online || sending || !(pending?.text || draft.trim())}>{sending ? 'Sending…' : pending ? 'Retry send' : snapshot.runnerConnected && !snapshot.recovery ? 'Send' : 'Queue message'}</button></div>{error && <p className="error" role="alert">{error}</p>}</form>
+      <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>{replyTo && <p>Replying to the report for {messages.find((m) => m.id === replyTo)?.evidence?.range.start} <button type="button" onClick={() => { setReplyTo(undefined); sessionStorage.removeItem('arthegall.reply'); }}>Cancel reply</button></p>}<label htmlFor="message">Message {dm.name}</label><textarea id="message" ref={composer} value={pending?.text ?? draft} disabled={Boolean(pending || dm.closed)} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder={`Message ${dm.name}…`} rows={3} maxLength={16000} /><div className="composer-footer"><span className="muted">{!online ? 'Your draft is kept here until the server reconnects.' : pending ? 'Retry uses the same message to prevent duplicates.' : 'Enter to send · Shift + Enter for a new line'}</span><button className="primary" disabled={Boolean(dm.closed) || !online || sending || !(pending?.text || draft.trim())}>{sending ? 'Sending…' : pending ? 'Retry send' : snapshot.runnerConnected && !snapshot.recovery ? 'Send' : 'Queue message'}</button></div>{error && <p className="error" role="alert">{error}</p>}</form></>}
     </main>
   </div>;
 }

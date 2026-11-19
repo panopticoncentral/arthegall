@@ -63,8 +63,8 @@ test('paired administrator DM, approvals, reconnect, refresh and narrow navigati
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     await page.screenshot({ path: info.outputPath('mobile.png'), fullPage: true });
     await page.getByRole('button', { name: 'Open conversations' }).click();
-    await page.getByRole('button', { name: 'Connections', exact: true }).click();
-    await page.getByRole('button', { name: 'Administrator', exact: true }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'System settings' })).toBeVisible();
     await page.getByRole('button', { name: 'Unpair this browser' }).click();
     await expect(page.getByLabel('Pairing code')).toBeVisible();
   } finally { await stop(runner); await stop(server); rmSync(root, { recursive: true, force: true }); }

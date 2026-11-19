@@ -14,15 +14,16 @@ type Schedule = { id: string; assignment_id: string; runner_id: string; time: st
 export class Scheduler {
   constructor(private db: Database.Database, private reporting: Reporting, private now: () => Date) {}
 
-  propose(assignment: string, runner: string, time: string, backfill: boolean, source: string) {
+  propose(assignment: string, runner: string, time: string, backfill: boolean, source: string | { sessionId: string }) {
     const proposals = this.db.prepare("SELECT * FROM report_schedules WHERE assignment_id=? AND state IN ('pending','active')").all(assignment) as Schedule[];
     const matching = proposals.find(s => s.time === time && Boolean(s.backfill) === backfill && s.runner_id === runner);
     if (matching?.state === 'pending') return false;
     this.db.prepare("UPDATE report_schedules SET state='retired' WHERE assignment_id=? AND state='pending'").run(assignment);
     if (matching) return true;
     const id = randomUUID();
-    this.db.prepare(`INSERT INTO report_schedules(id,assignment_id,runner_id,time,backfill,source_run,state)
-      VALUES (?,?,?,?,?,?,'pending')`).run(id, assignment, runner, time, Number(backfill), source);
+    this.db.prepare(`INSERT INTO report_schedules(id,assignment_id,runner_id,time,backfill,source_run,proposed_by,state)
+      VALUES (?,?,?,?,?,?,?,'pending')`).run(id, assignment, runner, time, Number(backfill),
+        typeof source === 'string' ? source : null, typeof source === 'string' ? null : source.sessionId);
     this.reporting.event('schedule_proposed', { id, assignment, runner, time, backfill, source });
     return false;
   }

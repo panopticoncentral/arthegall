@@ -44,7 +44,7 @@ If the browser says **Codex sign-in needed**, run `codex login` as the runner's 
 
 ## Execution history
 
-Open **Connections → Execution history** in a paired Hermes browser to set how many days to keep completed run details. The default is 30 days from completion. Before shortening the period, open **Run details → Pin run** beneath any assistant message whose detailed evidence you want to keep. **Unpin run** makes the run eligible again based on its original completion time. Pinning is available until cleanup begins.
+Open **Settings → System → Execution history** in a paired browser to set how many days to keep completed run details. The default is 30 days from completion. Before shortening the period, open **Run details → Pin run** beneath any assistant message whose detailed evidence you want to keep. **Unpin run** makes the run eligible again based on its original completion time. Pinning is available until cleanup begins.
 
 Cleanup runs automatically when the runner is connected. An expired run loses its intermediate progress text, activity details, per-run provider references and dedicated scheduled workspace. The DM keeps its final text, recorded usage and reply target. Shared assignment workspaces, provider source records, approvals, operation results and schedule receipts retain their own lifetimes. Runs with unresolved outcomes keep their details. Open **Run details** to check cleanup status or read a reason for deferral.
 
@@ -52,7 +52,7 @@ A same-installation server restore carries forward the current policy and pin ch
 
 ## Daily server backups
 
-Open **Connections → Daily server backups** in a paired browser. Enter the absolute path of an existing private folder on the server, choose how many daily copies to keep, and select **Enable daily backups**. New installations and upgrades start with this setting off. Each daily directory contains the same server snapshot and checksum manifest as an on-demand backup.
+Open **Settings → System → Daily server backups** in a paired browser. Enter the absolute path of an existing private folder on the server, choose how many daily copies to keep, and select **Enable daily backups**. New installations and upgrades start with this setting off. Each daily directory contains the same server snapshot and checksum manifest as an on-demand backup.
 
 Enabling saves the first copy immediately. The server takes subsequent backups at 3:00 AM in its local time zone, even with the browser closed and the runner offline. When the server wakes or starts after a missed backup, it takes one current snapshot. The settings panel shows the last verified path and time and the next attempt. A failure appears in the DM view and survives a restart. Reconnect the destination or correct the folder, then select **Retry daily backup**. The server also retries after 15 minutes.
 

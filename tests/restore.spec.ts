@@ -80,7 +80,8 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     await expect.poll(async () => fetch(origin).then(r=>r.status).catch(()=>0)).toBe(200);
     await page.context().addCookies([{url:origin,name:'arthegall',value:prior.browserToken,httpOnly:true}]);
     await page.goto(origin);
-    await page.getByRole('button',{name:'Connections'}).click();
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByText('Daily server backups',{exact:false}).first().click();
     await page.getByLabel('Backup folder on the server').fill(destination);
     await page.getByLabel('Daily copies to keep').fill('2');
     await page.getByRole('button',{name:'Enable daily backups'}).click();
@@ -94,6 +95,7 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
       expect(before.map(c=>c.day)).toEqual(['2020-01-01','2020-01-02']);
       for (const c of before) expect(existsSync(join(offline,c.name,'manifest.json'))).toBe(true);
       renameSync(offline,destination);
+      await page.getByRole('button',{name:'Back to conversation'}).click();
       await page.getByRole('button',{name:'Open backup settings'}).click();
       await page.getByRole('button',{name:'Retry daily backup'}).click();
       await expect(page.getByRole('alert')).toHaveCount(0);
@@ -112,7 +114,10 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     await pinnedReport.getByText('Run details',{exact:true}).click();
     await pinnedReport.getByRole('button',{name:'Pin run',exact:true}).click();
     await expect(pinnedReport.getByRole('button',{name:'Unpin run'})).toBeVisible();
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.locator('summary').filter({hasText:'Execution history'}).click();
     await expect(page.getByLabel('Days to keep completed run details')).toHaveValue('30');
+    await page.getByRole('button',{name:'Back to conversation'}).click();
     const period = due.subtract({days:1}).toPlainDate().toString();
     mkdirSync(join(prior.roots.codex,'sessions'),{recursive:true});
     writeFileSync(join(prior.roots.codex,'sessions','fixture.jsonl'),JSON.stringify({timestamp:period+'T20:00:00Z',type:'token_usage_record',
@@ -160,6 +165,8 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     const aging = new Database(path);
     try { aging.prepare('UPDATE run_history SET closed_at=? WHERE run_id IN (?,?,?)')
       .run(Date.now()-5*86_400_000,prior.run,original.run_id,second.run_id); } finally { aging.close(); }
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.locator('summary').filter({hasText:'Execution history'}).click();
     await page.getByLabel('Days to keep completed run details').fill('2');
     await page.getByRole('button',{name:'Save history retention'}).click();
     await expect.poll(()=>query('SELECT phase FROM run_history WHERE run_id=?',original.run_id)).toEqual([{phase:'pruned'}]);
@@ -215,7 +222,8 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     server = launch('server');
     await expect.poll(async () => fetch(origin).then(r=>r.status).catch(()=>0)).toBe(200);
     await page.goto(origin);
-    await page.getByRole('button',{name:'Connections'}).click();
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.locator('summary').filter({hasText:'Daily server backups'}).click();
     await expect(page.getByText(/Last verified/)).toContainText(newest);
     await expect(page.getByLabel('Daily copies to keep')).toHaveValue('2');
     await expect(page.getByText(/Offline — waiting for reconnect/)).toBeVisible();
@@ -244,6 +252,7 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     runner = launch('runner');
     await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeEnabled();
     expect(pinnedEvidence()).toEqual(preserved);
+    await page.locator('summary').filter({hasText:'Execution history'}).click();
     await expect(page.getByLabel('Days to keep completed run details')).toHaveValue('2');
     expect(query('SELECT pinned,phase FROM run_history WHERE run_id=?',second.run_id)).toEqual([{pinned:1,phase:'full'}]);
     expect(query('SELECT phase FROM run_history WHERE run_id=?',original.run_id)).toEqual([{phase:'pruned'}]);

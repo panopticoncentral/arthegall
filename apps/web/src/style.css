@@ -29,3 +29,36 @@
 .backup-settings label{display:grid;gap:4px;max-width:100%}
 .backup-settings input{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:8px;max-width:100%}
 .backup-settings input:not([type]){width:24em}.backup-settings code{overflow-wrap:anywhere}
+
+.settings-page{width:100%;max-width:840px;padding:22px 32px 36px;overflow-wrap:anywhere}
+.rail{overflow-y:auto}
+.rail-settings{border-top:1px solid var(--border);margin-top:20px;padding-top:12px}
+.rail-settings>button{background:none;border:0;font-weight:650}
+.rail-settings nav{display:grid;gap:2px}
+.rail-settings nav div{display:grid;margin-left:18px;padding-left:6px;border-left:1px solid var(--border)}
+.rail-settings nav a{color:inherit;text-decoration:none;padding:8px 12px;border-radius:6px;overflow-wrap:anywhere;font-size:14px}
+.rail-settings nav div a+a{margin-left:10px;font-size:13px}
+.rail-settings nav a:hover,.rail-settings nav a[aria-current=page]{background:var(--surface);font-weight:600}
+.settings-page h1{font-size:25px;letter-spacing:-.6px;margin:24px 0 5px}
+.settings-page h2{margin:0 0 10px}.settings-page h3{font-size:14px;margin:18px 0 5px}
+.settings-page>p{margin:6px 0 17px}.settings-page p{line-height:1.5}
+.settings-page .details{padding:18px 20px;border:1px solid var(--border);background:var(--surface);border-radius:9px;margin:14px 0;font-size:14px}
+.settings-page details{margin:12px 0}.settings-page summary{cursor:pointer}
+.settings-page button{margin:3px 6px 3px 0}.settings-page :is(a,summary),.settings-link,.agent-shortcut,.status a{color:inherit;text-underline-offset:3px}
+.settings-nav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:14px;border-bottom:1px solid var(--border);padding:4px 0 13px}
+.settings-nav [aria-current=page]{font-weight:650;text-decoration:none}.settings-list{padding:0;list-style:none}
+.settings-list li{display:flex;align-items:baseline;gap:14px;padding:14px 0;border-bottom:1px solid var(--border)}
+.settings-list span,.settings-link{color:var(--muted);font-size:13px}
+.settings-form,.settings-form label:not(.check){display:grid;gap:8px}.settings-form{gap:12px;margin:12px 0}
+.settings-form :is(input:not([type=checkbox]),textarea){font:inherit;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit}
+.settings-form input[type=time]{justify-self:start}.settings-form textarea{min-height:90px}
+.setting-text{white-space:pre-wrap}.revisions{padding-left:18px}.revisions p{margin:3px 0 10px}
+.settings-page .approval{margin:14px 0}.return-to-dm{display:block}.agent-shortcut{margin-left:auto;font-size:13px}
+.agent-shortcut+.activity-toggle{margin-left:0}.report-settings{display:inline-block;margin-right:10px}
+@media(max-width:650px){.settings-page{padding:14px}.conversation>header{height:auto;min-height:76px;flex-wrap:wrap;padding-block:10px;gap:9px}.settings-page .details{padding:14px}.settings-nav{gap:9px}}
+.system-policies{border:1px solid var(--border);border-radius:9px;background:var(--surface)}
+.settings-page .system-policies details{margin:0}
+.system-policies details+details{border-top:1px solid var(--border)}
+.system-policies summary{padding:13px 16px;font-weight:600}
+.system-policies summary span{display:block;margin:3px 0 0 16px;font-size:13px;font-weight:400;color:var(--muted)}
+.system-policies .backup-settings{padding:0 16px 16px;font-size:14px}

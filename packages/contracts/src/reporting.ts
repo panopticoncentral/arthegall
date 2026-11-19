@@ -29,6 +29,14 @@ export type UsageReport = z.infer<typeof UsageReport>;
 
 const name = z.string().trim().min(1).max(64).regex(/^[\p{L}\p{N}][\p{L}\p{N} ._-]*$/u);
 export const Definition = z.strictObject({ name, instructions: z.string().trim().min(1).max(2000) });
+export const EditDefinition = Definition.pick({ instructions: true }).extend({ revision: z.int().positive() });
+export const ReportingSettings = z.object({
+  name: z.string(), assignmentInstructions: z.string(), instructions: z.string(), revision: z.int(),
+  history: z.array(z.object({ revision: z.int(), instructions: z.string() })),
+  preference: z.object({ instructions: z.string(), messageId: z.uuid() }).nullable(),
+  access: z.array(z.object({ duration: z.enum(['assignment','run']), usedBy: z.uuid().nullable() })),
+});
+export type ReportingSettings = z.infer<typeof ReportingSettings>;
 export const CreateAssignment = Definition.extend({ assignment: z.string().trim().min(1).max(2000).optional() });
 export const ReportRequest = z.strictObject({ name, range: DateRange.optional() });
 export const ScheduleRequest = z.strictObject({

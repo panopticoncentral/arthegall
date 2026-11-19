@@ -93,6 +93,14 @@ for (const live of [false, true]) test(`${live ? 'Live Codex' : 'Synthetic'} sch
     await expect(savedReport.locator('.message-text')).toBeVisible();
     await savedReport.getByText('Original message text', { exact: true }).click();
     expect(await savedReport.locator('.original pre').textContent()).toBe(second!.text);
+    await savedReport.getByRole('link', { name: 'Assignment settings' }).click();
+    await expect(page.getByRole('heading', { name: 'Saved preference' })).toBeVisible();
+    const preference = store.db.prepare('SELECT instructions FROM report_preferences WHERE assignment_id=?').pluck().get(old.assignment);
+    await expect(page.locator('.setting-text').last()).toHaveText(String(preference));
+    await page.getByRole('button', { name: 'View source reply' }).click();
+    const source = store.db.prepare(`SELECT r.user_message_id FROM runs r JOIN report_preferences p
+      ON p.source_run=r.id WHERE p.assignment_id=?`).pluck().get(old.assignment);
+    await expect(page.locator('#message-' + source)).toBeInViewport();
     expect(store.db.prepare('SELECT evidence FROM report_context WHERE run_id=?').pluck().get(old.run)).toBe(old.evidence);
   } finally {
     await browser.close(); await runner.close(); await app.close(); store.close(); local.close(); rmSync(root, { recursive: true, force: true });

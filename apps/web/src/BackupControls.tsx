@@ -15,8 +15,7 @@ export function BackupControls({ status, save, retry, online, paused }: {
     finally { setSaving(false); }
   }
   const disabled = !online || saving || status.running;
-  return <section className="details backup-settings">
-    <h2>Daily server backups</h2>
+  return <div className="backup-settings">
     <p>{status.enabled ? 'Daily at 3:00 AM (' + status.timeZone + ')' : 'Off. Enabling takes the first backup immediately.'}</p>
     {status.lastPath && status.lastSuccess && <p>Last verified {new Date(status.lastSuccess).toLocaleString()} · <code>{status.lastPath}</code></p>}
     {paused && status.enabled ? <p>Daily backups will resume after restore reconciliation.</p> : status.running ? <p role="status">Checking backup and retention…</p> :
@@ -29,5 +28,5 @@ export function BackupControls({ status, save, retry, online, paused }: {
       {status.enabled && status.error && <button type="button" disabled={disabled} onClick={() => void act(retry)}>Retry daily backup</button>}
     </form>
     {error && <p role="alert">{error}</p>}
-  </section>;
+  </div>;
 }

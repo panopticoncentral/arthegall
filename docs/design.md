@@ -1,6 +1,6 @@
 # Arthegall product and architecture design
 
-Revised November 17, 2026 · First draft November 16, 2026
+Revised November 19, 2026 · First draft November 16, 2026
 
 Arthegall is a cross-platform control plane for agents. The user gives an assignment to a particular agent they know, follows the work when it interests them, and hears back when there is something to read or decide. The agent manages the providers and threads it uses to carry out the assignment.
 
@@ -49,6 +49,50 @@ The setup agent must obtain the user’s approval before granting an agent a new
 The default grant covers the named assignment, including retries and follow-up work, and expires when the assignment closes. For a recurring assignment, the request makes the duration explicit, for example “May Rowan use the Windows runner for every run of the morning ticket sweep?” The user can narrow a grant to one run or give standing access across assignments.
 
 Approving a machine for an assignment lets the agent use any tool it already has on that machine for that assignment. Adding a tool still requires user approval. Standing rules for individual actions continue to apply, including any requirement to ask before restarting a service.
+
+## Settings UI
+
+The Settings destination gives the user a place to read the current configuration, see where each choice applies and make changes directly.
+
+### Finding a setting
+
+Open **Settings** from the conversation sidebar, regardless of which DM is selected. The navigation for an installation with a reporting agent named Rowan looks like this.
+
+```text
+Settings
+├── System
+│   ├── Connections
+│   ├── Backups
+│   └── Execution history
+└── Agents
+    └── Rowan
+        ├── Definition and history
+        ├── Tools and access
+        └── Assignments
+            └── Daily usage report
+```
+
+**Agent settings** in Rowan’s DM header opens the same Rowan page. The schedule in the DM and the details of a saved report link directly to **Daily usage report**. The assignment page names its owner and links back to the conversation. On a narrow screen, each level occupies the main view, with a back link to its parent. Returning to the DM restores the selected conversation and draft.
+
+| Scope | What the user finds there | Where a change takes effect |
+| --- | --- | --- |
+| **System** | Under **Connections**, inspect runners, provider sign-in status and browser pairings. Under **Backups**, choose the destination and number of copies and inspect the last backup. Under **Execution history**, set how long to keep detailed run evidence. | Backup and retention policies cover this installation. Unpairing targets the selected browser. A user can still pin an individual run from its details in the conversation. |
+| **Agent** | Read the agent’s role and instructions, inspect definition revisions, and see preferred provider, model and effort. Review tools and machine access with the scope of each grant. Browse the agent’s assignments. | An instruction edit creates a definition revision for this agent’s future work. A grant used by just one assignment links to that assignment and shows its duration. |
+| **Assignment** | Read the responsibility, instructions and saved preferences. Inspect the delivery conversation, schedule and time zone, missed-run policy, runner and approved tools. Review a proposed schedule change or close the assignment here. | Changes apply to this responsibility. A recurring assignment carries them into future runs. Closing it ends future dispatch and access granted for that assignment. Its reports and conversation stay available. |
+
+### How the scopes fit together
+
+Suppose Rowan owns a daily usage report and a weekly build review. The system page shows whether the local runner is connected. Rowan’s page shows the instruction “Include links to supporting evidence,” which applies to both assignments. The daily report’s page shows “Put source coverage first,” its 8 AM Pacific schedule, and approval to read usage on the local runner for each occurrence. The weekly review has its own instructions and grants. Each run records the configuration used, so an earlier report can still be understood after a setting changes.
+
+Chat and Settings use the same server-owned records. Asking the Administrator to revise Rowan’s instructions and saving those instructions on Rowan’s page both produce a definition revision visible in the same history. A preference saved from a reply to a report appears on the report’s assignment page, with a link to the reply that established it. The edit form names the affected agent or assignment before the user saves.
+
+Ordinary edits take effect within their stated scope. Adding a tool, granting access to another machine, or expanding standing authority opens a proposal showing who needs what access, why and for how long. For example, changing the report from 8 AM to 9 AM shows the active and proposed schedules together. The 8 AM schedule continues until the user approves its replacement. A decision made from Settings or the DM resolves the same request in both places.
+
+### First pass
+
+Open **Settings → System** for connections, backups and retention. From a reporting DM, **Agent settings** opens its instructions and revision history. The schedule below the agent name and **Assignment settings** on a saved report open the assignment, including its schedule, preferences, access decisions and closure action. A proposed schedule takes effect after approval in the DM or in Settings.
+
+This first pass uses the current local-runner reporting workflow. Selection among multiple runners or providers and editing model and effort preferences belong to the broader agent design. The existing [reporting workflow](milestone-2.md) and [daily schedule behavior](milestone-3.md) describe the browser experience available today.
 
 ## Central server, user clients, and runners
 

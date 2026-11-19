@@ -108,6 +108,7 @@ export const DailyBackupStatus = BackupSettings.extend({
 });
 export type DailyBackupStatus = z.infer<typeof DailyBackupStatus>;
 export const Snapshot = z.object({
+  pairings: z.array(z.object({ current: z.number(), expires: z.number() })).default([]),
   backups: DailyBackupStatus.optional(),
   retentionDays: RetentionDays,
   conversations: z.array(z.object({ id: Id, name: z.string(), administrator: z.number(), closed: z.number() })),
