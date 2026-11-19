@@ -6,7 +6,7 @@ The first eligible occurrence is the first due time at or after approval. The re
 
 Each daily occurrence uses America/Los_Angeles and covers the calendar day before its due date. The spring clock gap moves a nonexistent time forward by the size of the gap. The autumn overlap uses the earlier instant. For a runner returning on Wednesday after missing Monday, Tuesday, and Wednesday mornings, default catch-up sends Tuesday’s usage and records two skips. Request “Backfill every missed daily report” to receive Sunday, Monday, and Tuesday separately under an approved backfill schedule.
 
-Use **Reply to report** to select a particular result. Ask a question about the figures to use that report’s saved evidence. Reply “Put source coverage first from now on” to update the assignment’s presentation preferences. The reporter’s completed reply saves the new preference revision with its source run and selected report. Each scheduled dispatch uses the then-current agent definition, assignment instructions and preference revision in a fresh Codex thread and run directory.
+Saved reports render as Markdown, including tables. Expand **Original message text** to read the source or **Recorded usage** to inspect the underlying figures. Use **Reply to report** to select a particular result. Ask a question about the figures to use that report’s saved evidence. Reply “Put source coverage first from now on” to update the assignment’s presentation preferences. The reporter’s completed reply saves the new preference revision with its source run and selected report. Each scheduled dispatch uses the then-current agent definition, assignment instructions and preference revision in a fresh Codex thread and run directory.
 
 ## Verification
 
@@ -19,4 +19,4 @@ npm run build
 ARTHEGALL_LIVE_CODEX=1 npm exec playwright test -- tests/scheduled.spec.ts
 ```
 
-The [milestone 2 accounting rules](milestone-2.md#figures-and-coverage) continue to apply. Claude is a usage source and active-day coverage still needs verification. Conversation Markdown rendering remains on the release plan.
+The [milestone 2 accounting rules](milestone-2.md#figures-and-coverage) continue to apply. Claude is a usage source and active-day coverage still needs verification.

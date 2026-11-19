@@ -7,7 +7,7 @@ import { migrations as runnerMigrations } from '../../apps/runner/src/migrations
 import { readUsage } from '../../apps/runner/src/usage.js';
 import { onDemandAdministratorInstructions } from '../../apps/server/src/reporting.js';
 
-export async function reportingUpgrade(root: string) {
+export async function reportingUpgrade(root: string, reportText = 'Earlier synthetic report') {
   const serverPath = join(root, 'server.sqlite'), runnerPath = join(root, 'runner.sqlite');
   const server = new Database(serverPath), runner = new Database(runnerPath);
   const ids = { server: randomUUID(), runner: randomUUID(), administrator: randomUUID(), conversation: randomUUID(), assignment: randomUUID() };
@@ -37,7 +37,7 @@ export async function reportingUpgrade(root: string) {
     server.prepare('INSERT INTO reporting_assignments VALUES (?,?,0)').run(assignment, 'Report Codex and Claude usage and source coverage.');
     server.prepare('INSERT INTO browser_sessions VALUES (?,?,?,0)').run(session, digest(browserToken), Date.now() + 3600_000);
     server.prepare("INSERT INTO report_access VALUES (?,?,?,'accept','assignment',?,NULL)").run(grant, assignment, ids.runner, session);
-    server.prepare("INSERT INTO messages(id,conversation_id,author,text,state) VALUES (?,?,'user','Earlier report request','complete'),(?,?,'assistant','Earlier synthetic report','completed')").run(user, dm, answer, dm);
+    server.prepare("INSERT INTO messages(id,conversation_id,author,text,state) VALUES (?,?,'user','Earlier report request','complete'),(?,?,'assistant',?,'completed')").run(user, dm, answer, dm, reportText);
     server.prepare("INSERT INTO runs VALUES (?,?,?,?,?,'completed',2)").run(run, assignment, ids.runner, user, answer);
     server.prepare('INSERT INTO report_context VALUES (?,?,NULL,?)').run(run, JSON.stringify(range), evidence);
     const payload = JSON.stringify({ type: 'dispatch', version: 1, dispatchId: dispatch, context: { agentId: reporter, assignmentId: assignment, runId: run, definitionVersion: 1,
@@ -48,7 +48,7 @@ export async function reportingUpgrade(root: string) {
     runner.prepare("INSERT INTO sessions VALUES (?,'prior-report-thread','prior-configuration')").run(assignment);
     runner.prepare("INSERT INTO sessions VALUES (?,'prior-admin-thread','prior-admin-configuration')").run(ids.assignment);
     runner.prepare("INSERT INTO executions(run_id,dispatch_id,payload,state,thread_id,sequence) VALUES (?,?,?,'done','prior-report-thread',2)").run(run, dispatch, payload);
-    const events = [{ kind: 'usage', report: JSON.parse(evidence) }, { kind: 'outcome', outcome: { status: 'completed', message: 'Earlier synthetic report' } }];
+    const events = [{ kind: 'usage', report: JSON.parse(evidence) }, { kind: 'outcome', outcome: { status: 'completed', message: reportText } }];
     for (const [index, event] of events.entries()) {
       const deliveryId = randomUUID();
       const delivery = JSON.stringify({ type: 'delivery', version: 1, deliveryId, runId: run, sequence: index + 1, event });

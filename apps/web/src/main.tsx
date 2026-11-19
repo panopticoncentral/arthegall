@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { z } from 'zod';
+import { MessageMarkdown } from './MessageMarkdown.js';
 import './style.css';
 
 import { Snapshot } from '../../../packages/contracts/src/index.js';
@@ -143,7 +144,21 @@ function App() {
       {activity && <section className="details" aria-label="Activity"><h2>Activity</h2><ol>{activity.map((line, index) => <li key={index}>{line}</li>)}</ol></section>}
       <section className="messages" aria-label="Conversation messages">
         {messages.length === 0 && <div className="welcome"><h2>{dm.administrator ? 'Your administrator is here.' : 'Usage reports appear here.'}</h2><p>Start a conversation. Your history stays with Arthegall.</p></div>}
-        {messages.map((message) => <article key={message.id} className="message"><span className={`avatar ${message.author === 'user' ? 'user' : ''}`}>{message.author === 'user' ? 'Y' : dm.name.charAt(0)}</span><div><strong>{message.requestedReport ? 'Report request' : message.author === 'user' ? 'You' : dm.name}</strong><p className="message-text">{message.text || (message.state === 'awaiting_access' ? 'Waiting for your access decision…' : message.state === 'queued' ? 'Queued for the runner…' : 'Working…')}</p>{!['completed', 'complete'].includes(message.state) && <span className="message-state">{message.state === 'streaming' ? 'Responding…' : message.state.replaceAll('_', ' ')}</span>}{message.evidence && <RecordedUsage report={message.evidence} />}{message.evidence && <button type="button" disabled={Boolean(pending)} onClick={() => { setReplyTo(message.id); sessionStorage.setItem('arthegall.reply', message.id); composer.current?.focus(); }}>Reply to report</button>}</div></article>)}
+        {messages.map((message) => <article key={message.id} className="message">
+          <span className={`avatar ${message.author === 'user' ? 'user' : ''}`}>{message.author === 'user' ? 'Y' : dm.name.charAt(0)}</span>
+          <div>
+            <strong>{message.requestedReport ? 'Report request' : message.author === 'user' ? 'You' : dm.name}</strong>
+            {message.text && message.state !== 'streaming'
+              ? <MessageMarkdown text={message.text} />
+              : <p className="message-text plain">{message.text || (message.state === 'awaiting_access' ? 'Waiting for your access decision…' : message.state === 'queued' ? 'Queued for the runner…' : 'Working…')}</p>}
+            {!['completed', 'complete'].includes(message.state) && <span className="message-state">{message.state === 'streaming' ? 'Responding…' : message.state.replaceAll('_', ' ')}</span>}
+            {message.evidence && <>
+              <details className="original"><summary>Original message text</summary><pre>{message.text}</pre></details>
+              <RecordedUsage report={message.evidence} />
+              <button type="button" disabled={Boolean(pending)} onClick={() => { setReplyTo(message.id); sessionStorage.setItem('arthegall.reply', message.id); composer.current?.focus(); }}>Reply to report</button>
+            </>}
+          </div>
+        </article>)}
         {snapshot.schedules.filter(s => (dm.administrator || s.conversationId === dm.id) && s.state === 'pending').map(s =>
           <section className="approval" key={s.id}><h2>Recurring reporting access requested</h2>
             <p>Allow {s.name} to use the local runner and read_usage for this reporting assignment every day at {s.time} America/Los_Angeles? Each report covers the previous Pacific calendar day.</p>

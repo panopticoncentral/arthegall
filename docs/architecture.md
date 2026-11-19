@@ -157,6 +157,6 @@ The [milestone 3 operating notes and verification](milestone-3.md) describe sche
 
 ### Release verification
 
-During milestone 2 acceptance, the conversation displayed Markdown formatting characters as plain text. Render Markdown in conversation messages and verify in a browser that formatting survives a reload of the saved DM.
+The browser renders Markdown from the saved message text. The persisted-report Playwright check opens an earlier reporting DM, reloads it at a narrow width, and verifies headings, lists, emphasis, a usage table, and safe link handling. It opens the original text and recorded evidence, then sends a reply to the selected report.
 
 Verify the supporting behavior defined above, including waiting agents releasing capacity, bounded recovery, offline execution and revocation, permission-checked tools, and pending central operations. Verify backup restoration with dispatch reconciliation, retention with pinned evidence and durable deduplication records, and platform installation and update behavior. Public samples and fixtures use synthetic data. These checks substantiate release behavior beyond the initial three milestones.

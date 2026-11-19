@@ -53,7 +53,7 @@ for (const live of [false, true]) test(`${live ? 'Live Codex' : 'Synthetic'} sch
     expect(JSON.parse(first.evidence).codex.total).toBe(34);
     browser = await open(); page = await browser.newPage(); await page.goto(origin);
     await page.getByRole('button', { name: 'Rowan', exact: true }).click();
-    await expect(page.getByText('Earlier synthetic report', { exact: true })).toBeVisible();
+    await expect(page.locator('.message-text').getByText('Earlier synthetic report', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Reply to report' }).last().click();
     await page.getByLabel('Message Rowan', { exact: true }).fill('Put source coverage first from now on.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -89,7 +89,10 @@ for (const live of [false, true]) test(`${live ? 'Live Codex' : 'Synthetic'} sch
     expect(local.execution(old.run).thread_id).toBe('prior-report-thread');
     browser = await open(); page = await browser.newPage(); await page.goto(origin);
     await page.getByRole('button', { name: 'Rowan', exact: true }).click();
-    await expect(page.locator('.message-text').last()).toHaveText(second!.text);
+    const savedReport = page.locator('.message').last();
+    await expect(savedReport.locator('.message-text')).toBeVisible();
+    await savedReport.getByText('Original message text', { exact: true }).click();
+    expect(await savedReport.locator('.original pre').textContent()).toBe(second!.text);
     expect(store.db.prepare('SELECT evidence FROM report_context WHERE run_id=?').pluck().get(old.run)).toBe(old.evidence);
   } finally {
     await browser.close(); await runner.close(); await app.close(); store.close(); local.close(); rmSync(root, { recursive: true, force: true });
