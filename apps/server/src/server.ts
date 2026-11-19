@@ -4,7 +4,7 @@ import websocket from '@fastify/websocket';
 import staticFiles from '@fastify/static';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
-import { BackupSettings, RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
+import { BackupSettings, RetentionDays, RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
 import type { DailyBackups } from '../../../scripts/daily-backups.js';
 import type { Scan } from './restore-recovery.js';
 import { Conflict, ServerStore } from './store.js';
@@ -16,7 +16,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   await app.register(cookie);
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
   const browsers = new Map<WebSocket, { sessionId: string; token: string; cursor: number }>();
-  const runners = new Map<WebSocket, { runnerId: string; ready: boolean; scan?: Scan }>();
+  const runners = new Map<WebSocket, { runnerId: string; ready: boolean; retention?: boolean; nextCleanup: number; scan?: Scan }>();
   store.recovery.offline();
   const alive = new Set<WebSocket>();
   const track = (socket: WebSocket) => {
@@ -45,6 +45,11 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       if (!runner.ready || store.recovery.paused()) continue;
       const dispatch = store.nextDispatch(runner.runnerId);
       if (dispatch) send(socket, dispatch);
+      if (runner.retention && Date.now() >= runner.nextCleanup) {
+        const prune = store.retention.next(runner.runnerId);
+        runner.nextCleanup = Date.now() + (prune ? 60_000 : 30_000);
+        if (prune) send(socket,prune);
+      }
       for (const decision of store.decisions(runner.runnerId)) send(socket, decision);
     }
   };
@@ -118,6 +123,19 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   const checkApprovalChanges = async () => {
     if (store.recovery.paused()) throw new Conflict('Review runner records before changing approvals or assignments');
   };
+  app.post('/api/retention', { preHandler: checkApprovalChanges }, async request => {
+    const { days } = z.strictObject({days: RetentionDays}).parse(request.body);
+    store.retention.configure(days);
+    for (const runner of runners.values()) runner.nextCleanup = 0;
+    return { saved: true };
+  });
+  app.post('/api/runs/:id/pin', { preHandler: checkApprovalChanges }, async request => {
+    const { id } = z.object({id:z.uuid()}).parse(request.params);
+    const { pinned } = z.strictObject({pinned:z.boolean()}).parse(request.body);
+    store.retention.pin(id,pinned);
+    for (const runner of runners.values()) runner.nextCleanup = 0;
+    return { saved: true };
+  });
   app.post('/api/approvals/:id', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { decision } = z.strictObject({ decision: z.enum(['accept', 'decline']) }).parse(request.body);
@@ -165,7 +183,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     if (typeof runnerId !== 'string' || !store.authenticateRunner(runnerId, token)) { socket.close(1008); return; }
     for (const [other, binding] of runners) if (binding.runnerId === runnerId) { runners.delete(other); other.close(1000, 'Runner reconnected'); }
     store.recovery.offline(runnerId);
-    runners.set(socket, { runnerId, ready: false });
+    runners.set(socket, { runnerId, ready: false, nextCleanup: 0 });
     track(socket);
     socket.on('message', (raw) => {
       try {
@@ -176,6 +194,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
           if (frame.runnerId !== runnerId) throw new Error('Identity mismatch');
           if (binding.ready) throw new Error('Duplicate handshake');
           binding.ready = true;
+          binding.retention = frame.retentionVersion === 1;
           if (store.recovery.paused()) {
             if (!frame.inventoryVersion) { store.recovery.unsupported(runnerId); return; }
             store.recovery.begin(runnerId);
@@ -189,7 +208,10 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
           if (frame.item.kind === 'end') delete binding.scan;
           else send(socket, { type: 'inventory_next', version: 1 });
         } else if (store.recovery.paused() && frame.type !== 'status') return;
-        else if (frame.type === 'accepted') store.accept(runnerId, frame.dispatchId);
+        else if (frame.type === 'prune_result') {
+          store.retention.result(runnerId,frame.runId,frame.dispatchId,frame.error);
+          binding.nextCleanup = 0;
+        } else if (frame.type === 'accepted') store.accept(runnerId, frame.dispatchId);
         else if (frame.type === 'delivery') {
           const result = store.receive(runnerId, frame);
           send(socket, { type: 'receipt', version: 1, deliveryId: frame.deliveryId, result });

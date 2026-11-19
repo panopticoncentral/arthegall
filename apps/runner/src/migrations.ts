@@ -10,4 +10,7 @@ CREATE TABLE operations (
   result TEXT, PRIMARY KEY(run_id,operation));
 ` }, { version: 3, sql: `
 ALTER TABLE sessions ADD COLUMN thread_configuration TEXT;
+` }, { version: 4, sql: `
+ALTER TABLE executions ADD COLUMN history_pruned INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX deliveries_by_run ON deliveries(run_id,position);
 ` }];

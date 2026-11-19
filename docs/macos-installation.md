@@ -42,6 +42,14 @@ Here `arthegall` stands for that full launcher path; installation does not modif
 
 If the browser says **Codex sign-in needed**, run `codex login` as the runner's macOS user. New queued messages remain durable. Interrupted work with uncertain effects is blocked rather than replayed automatically.
 
+## Execution history
+
+Open **Connections → Execution history** in a paired Hermes browser to set how many days to keep completed run details. The default is 30 days from completion. Before shortening the period, open **Run details → Pin run** beneath any assistant message whose detailed evidence you want to keep. **Unpin run** makes the run eligible again based on its original completion time. Pinning is available until cleanup begins.
+
+Cleanup runs automatically when the runner is connected. An expired run loses its intermediate progress text, activity details, per-run provider references and dedicated scheduled workspace. The DM keeps its final text, recorded usage and reply target. Shared assignment workspaces, provider source records, approvals, operation results and schedule receipts retain their own lifetimes. Runs with unresolved outcomes keep their details. Open **Run details** to check cleanup status or read a reason for deferral.
+
+A same-installation server restore carries forward the current policy and pin choices, including pins made after the snapshot. Keep the runner database and workspaces when restoring the server. A server backup alone does not contain runner workspace files.
+
 ## Daily server backups
 
 Open **Connections → Daily server backups** in a paired browser. Enter the absolute path of an existing private folder on the server, choose how many daily copies to keep, and select **Enable daily backups**. New installations and upgrades start with this setting off. Each daily directory contains the same server snapshot and checksum manifest as an on-demand backup.
@@ -82,7 +90,7 @@ Run the operator drill against a package with:
 ARTHEGALL_PACKAGE_PATH=/absolute/path/to/package npm exec playwright test -- tests/restore.spec.ts
 ```
 
-The drill uses a temporary installation, a synthetic provider and isolated usage records. It exercises an unavailable backup folder, retries, rotates daily copies, restores a retained pre-report snapshot with the newer runner intact, restarts it during replay, repeats a delivery, and checks the original report, evidence and reply target through the paired browser.
+The drill uses a temporary installation, a synthetic provider and isolated usage records. It exercises an unavailable backup folder, retries, rotates daily copies, pins one scheduled report and prunes another, then restores the oldest retained daily snapshot with the newer runner intact. It restarts the server during replay, repeats a delivery and checks provider execution counts, pinned evidence and workspace bytes, recorded usage and the original DM reply target.
 
 ## Synthetic native approval acceptance
 

@@ -131,6 +131,10 @@ A restored server starts with dispatch paused, reconciles with runners, and surf
 
 Retain conversations, reports, agent definitions and revisions, memories, approvals, and assignment summaries until the user explicitly deletes them. Archiving preserves channel contents. Detailed execution records and intermediate workspace files default to 30 days of retention after a run closes. The period is configurable, and the user can pin a run to preserve its evidence. Explicit deliverables remain with the conversation.
 
+The server records the first completion time. During upgrade it uses the saved outcome event time, falling back to the upgrade time when the event is unavailable. Cleanup requires an unpinned completed run, a connected runner, acknowledged deliveries and agreement on the frozen dispatch, delivery sequence, operation results and approval decisions. The server commits the cleanup claim before authorizing the runner. The runner compacts its journal and records any outstanding workspace deletion before acknowledging. Either service can retry after interruption.
+
+Both journals replace intermediate progress and activity bodies with the original delivery IDs, sequence numbers, event kinds and content hashes. Replay verifies duplicate deliveries against those receipts. Frozen dispatches, terminal outcomes, decisions, operation results and usage evidence remain available to reconstruct the report and advance the schedule. A pin preserves the full journal and the run’s dedicated workspace. During a same-installation rollback, restore carries the live retention policy, pins and cleanup claims into the staged snapshot before reconciliation.
+
 Cleanup preserves records needed by active work, pending delivery, and recovery. Compact records identifying completed commands and results outlive detailed logs so delayed retries can still be recognized.
 
 ## Delivery milestones

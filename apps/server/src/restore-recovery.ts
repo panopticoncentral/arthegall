@@ -121,7 +121,7 @@ export class RestoreRecovery {
   }
   apply(runner: string, scan: Scan, item: InventoryItem) {
     const current = scan.execution;
-    if (current && !scan.failed && item.kind !== 'delivery') {
+    if (current && !scan.failed && ['execution','end'].includes(item.kind)) {
       const run = current.dispatch.context.runId;
       const state = this.db.prepare('SELECT state,last_sequence FROM runs WHERE id=?').get(run) as { state: string; last_sequence: number };
       if (scan.received !== current.sequence || state.last_sequence !== current.sequence ||
@@ -131,6 +131,13 @@ export class RestoreRecovery {
         this.issue(runner, run, 'Runner queue conflicts with evidence that execution started');
       else if (current.state === 'running' || (state.state === 'blocked' && !this.db.prepare('SELECT 1 FROM restore_closed WHERE run_id=?').get(run)))
         this.issue(runner, run, 'Execution outcome is uncertain. Review the runner record before retrying');
+      else if (current.pruned) {
+        if (state.state !== 'completed' || this.db.prepare('SELECT pinned FROM run_history WHERE run_id=?').pluck().get(run))
+          this.issue(runner,run,'Runner reports compacted history for a protected run');
+        else if (current.cleanupPending)
+          this.db.prepare("UPDATE run_history SET phase='pending',retry_at=0 WHERE run_id=?").run(run);
+        else this.store.retention.complete(runner,run);
+      }
     }
     if (item.kind === 'end') {
       this.db.prepare(`INSERT OR REPLACE INTO restore_issues SELECT r.runner_id,r.id,'Runner has no matching execution for this dispatch'
@@ -146,7 +153,7 @@ export class RestoreRecovery {
       this.db.prepare('DELETE FROM restore_issues WHERE runner_id=? AND run_id=?').run(runner,item.dispatch.context.runId);
     }
     const run = scan.execution?.dispatch.context.runId;
-    if (!run || item.kind === 'delivery' && item.delivery.runId !== run) throw new Conflict('Unexpected inventory order');
+    if (!run || (item.kind === 'delivery' && item.delivery.runId !== run) || (item.kind === 'history_receipt' && item.runId !== run)) throw new Conflict('Unexpected inventory order');
     if (scan.failed) return;
     try {
       this.db.transaction(() => {
@@ -154,6 +161,12 @@ export class RestoreRecovery {
           this.match(runner,item.dispatch);
           this.store.accept(runner,item.dispatch.dispatchId);
         } else {
+          if (item.kind === 'history_receipt') {
+            if (!scan.execution?.pruned || scan.execution.state !== 'done' || item.sequence !== ++scan.received)
+              throw new Conflict('Unexpected compact receipt in runner inventory');
+            this.store.retention.recoverReceipt(runner,item);
+            return;
+          }
           if (item.delivery.sequence !== ++scan.received) throw new Conflict('Runner delivery sequence is incomplete');
           if (item.delivery.event.kind === 'outcome' && scan.execution?.outcomeHash &&
               createHash('sha256').update(JSON.stringify(item.delivery.event.outcome)).digest('hex') !== scan.execution.outcomeHash)

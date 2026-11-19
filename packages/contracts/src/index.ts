@@ -66,23 +66,34 @@ export const Decision = z.strictObject({
   approvalId: Id, runId: Id, decision: z.enum(['accept', 'decline']),
 });
 export type Decision = z.infer<typeof Decision>;
+export const HistoryReceipt = z.strictObject({
+  kind: z.literal('history_receipt'), runId: Id, deliveryId: Id, sequence: z.number().int().positive(),
+  eventKind: z.enum(['progress','activity']), digest: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type HistoryReceipt = z.infer<typeof HistoryReceipt>;
+export const PruneHistory = z.strictObject({ type: z.literal('prune_history'), version: z.literal(1),
+  runId: Id, dispatchId: Id, journalHash: z.string().regex(/^[a-f0-9]{64}$/) });
+export type PruneHistory = z.infer<typeof PruneHistory>;
+export const RetentionDays = z.number().int().positive();
 // Recovery pulls one bounded frame at a time, including deliveries already receipted.
 export const InventoryItem = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('execution'), dispatch: Dispatch, state: z.enum(['queued','running','done']), outcomeHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), sequence: z.number().int().nonnegative() }),
+  HistoryReceipt,
+  z.strictObject({ kind: z.literal('execution'), pruned: z.literal(true).optional(), cleanupPending: z.literal(true).optional(), dispatch: Dispatch, state: z.enum(['queued','running','done']), outcomeHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), sequence: z.number().int().nonnegative() }),
   z.strictObject({ kind: z.literal('delivery'), delivery: Delivery, decision: Decision.optional(), result: OperationResult.optional() }),
   z.strictObject({ kind: z.literal('end') }),
 ]);
 export type InventoryItem = z.infer<typeof InventoryItem>;
 export const RunnerFrame = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('hello'), version: z.literal(ProtocolVersion), runnerId: Id, inventoryVersion: z.literal(1).optional() }),
+  z.strictObject({ type: z.literal('hello'), version: z.literal(ProtocolVersion), runnerId: Id, inventoryVersion: z.literal(1).optional(), retentionVersion: z.literal(1).optional() }),
   z.strictObject({ type: z.literal('accepted'), version: z.literal(ProtocolVersion), dispatchId: Id }),
   z.strictObject({ type: z.literal('status'), version: z.literal(ProtocolVersion), status: z.enum(['ready', 'sign_in_needed', 'unavailable']) }),
   Delivery,
+  z.strictObject({ type: z.literal('prune_result'), version: z.literal(1), runId: Id, dispatchId: Id, error: z.string().max(500).optional() }),
   z.strictObject({ type: z.literal('inventory'), version: z.literal(1), item: InventoryItem }),
   z.strictObject({ type: z.literal('decision_ack'), version: z.literal(ProtocolVersion), approvalId: Id }),
 ]);
 export const ServerFrame = z.discriminatedUnion('type', [
-  Dispatch, Decision,
+  Dispatch, Decision, PruneHistory,
   z.strictObject({ type: z.literal('inventory_next'), version: z.literal(1) }),
   z.strictObject({ type: z.literal('receipt'), version: z.literal(ProtocolVersion), deliveryId: Id, result: OperationResult.optional() }),
 ]);
@@ -98,6 +109,7 @@ export const DailyBackupStatus = BackupSettings.extend({
 export type DailyBackupStatus = z.infer<typeof DailyBackupStatus>;
 export const Snapshot = z.object({
   backups: DailyBackupStatus.optional(),
+  retentionDays: RetentionDays,
   conversations: z.array(z.object({ id: Id, name: z.string(), administrator: z.number(), closed: z.number() })),
   schedules: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, conversationId: Id, name: z.string(), time: z.string(), backfill: z.number(), state: z.enum(['pending','active']) })),
   grants: z.array(z.object({ id: Id, name: z.string(), conversationId: Id })),
@@ -107,6 +119,6 @@ export const Snapshot = z.object({
   messages: z.array(z.object({ id: Id, conversationId: Id, evidence: UsageReport.nullable(), requestedReport: z.number(), author: z.enum(['user', 'assistant']), text: z.string(), state: z.string() })),
   approvals: z.array(z.object({ id: Id, runId: Id, conversationId: Id, command: z.string() })),
   runners: z.array(z.object({ id: Id, status: z.string() })),
-  runs: z.array(z.object({ id: Id, state: z.string() })),
+  runs: z.array(z.object({ id: Id, state: z.string(), messageId: Id, pinned: z.number(), history: z.enum(['full','pending','pruned']), historyError: z.string().nullable() })),
 });
 export type Snapshot = z.infer<typeof Snapshot>;

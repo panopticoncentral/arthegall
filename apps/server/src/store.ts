@@ -5,6 +5,8 @@ import { dirname } from 'node:path';
 import { z } from 'zod';
 import { Decision, Delivery, Dispatch, ExecutionContext, OperationResult, SendMessage } from '../../../packages/contracts/src/index.js';
 import { RestoreRecovery } from './restore-recovery.js';
+import { HistoryRetention } from './retention.js';
+import { compactReceipt } from '../../../packages/contracts/src/history.js';
 import { Scheduler } from './scheduler.js';
 import { migrations } from './migrations.js';
 
@@ -17,6 +19,7 @@ const Run = z.object({ id: z.string(), assignment_id: z.string(), runner_id: z.s
 export class ServerStore {
   readonly db: Database.Database;
   readonly reporting: Reporting;
+  readonly retention = new HistoryRetention(this);
   readonly scheduler: Scheduler;
   readonly recovery: RestoreRecovery;
   constructor(path: string, private now = () => new Date()) {
@@ -253,8 +256,13 @@ export class ServerStore {
       const old = this.db.prepare('SELECT payload,result FROM delivery_receipts WHERE runner_id=? AND delivery_id=?').get(runnerId, delivery.deliveryId);
       if (old) {
         const saved = z.object({ payload: z.string(), result: z.string().nullable() }).parse(old);
-        if (saved.payload !== payload && JSON.stringify(Delivery.parse(JSON.parse(saved.payload))) !== payload)
-          throw new Conflict('Delivery ID reused with different content');
+        if (saved.payload !== payload) {
+          const previous = JSON.parse(saved.payload);
+          const matches = previous.kind === 'history_receipt'
+            ? ['progress','activity'].includes(delivery.event.kind) && JSON.stringify(compactReceipt(delivery)) === saved.payload
+            : JSON.stringify(Delivery.parse(previous)) === payload;
+          if (!matches) throw new Conflict('Delivery ID reused with different content');
+        }
         const result = saved.result;
         return result ? OperationResult.parse(JSON.parse(result)) : undefined;
       }
@@ -334,7 +342,7 @@ export class ServerStore {
   }
   snapshot() {
     return this.db.transaction(() => ({
-      recovery: this.recovery.status(),
+      recovery: this.recovery.status(), retentionDays: this.retention.days(),
       conversations: this.db.prepare(`SELECT c.id,a.name,(a.id=?) AS administrator,COALESCE(ra.closed,0) AS closed FROM conversations c JOIN agents a ON a.id=c.agent_id JOIN assignments s ON s.conversation_id=c.id LEFT JOIN reporting_assignments ra ON ra.assignment_id=s.id ORDER BY administrator DESC,c.rowid`).all(this.id('administrator')),
       schedules: this.db.prepare(`SELECT p.id,p.assignment_id AS assignmentId,p.runner_id AS runnerId,p.time,p.backfill,p.state,
         s.conversation_id AS conversationId,a.name FROM report_schedules p JOIN assignments s ON s.id=p.assignment_id
@@ -349,7 +357,8 @@ export class ServerStore {
         return { ...message, evidence: message.evidence ? JSON.parse(message.evidence) : null };
       }),
       approvals: this.db.prepare('SELECT a.id,a.run_id AS runId,s.conversation_id AS conversationId,a.command FROM approvals a JOIN runs r ON r.id=a.run_id JOIN assignments s ON s.id=r.assignment_id WHERE a.decision IS NULL').all(),
-      runs: this.db.prepare('SELECT id,state FROM runs').all(),
+      runs: this.db.prepare(`SELECT r.id,r.state,r.assistant_message_id AS messageId,h.pinned,h.phase AS history,h.error AS historyError
+        FROM runs r JOIN run_history h ON h.run_id=r.id`).all(),
       runners: this.db.prepare('SELECT id,status FROM runners').all(),
       cursor: z.object({ cursor: z.number() }).parse(this.db.prepare('SELECT COALESCE(MAX(sequence),0) AS cursor FROM events').get()).cursor,
     }))();

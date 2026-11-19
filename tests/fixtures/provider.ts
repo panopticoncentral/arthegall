@@ -49,6 +49,7 @@ lines.on('line', (line) => { void (async () => {
       if (mode() === 'scheduled') {
         if (context.administrator) await call('schedule_usage_report', { name: 'Rowan', time: '08:00' });
         else if (context.range) {
+          appendFileSync(join(root,'scheduled-executions'),context.runId + '\n');
           const report = await call('read_usage', context.range);
           message = (context.preference ? 'Source coverage: local records. ' : '') + 'Synthetic total: ' + report.codex.total;
         } else { assignmentPreference = 'Put source coverage first.'; message = 'Saved your preference.'; }

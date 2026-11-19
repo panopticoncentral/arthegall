@@ -20,6 +20,31 @@ async function post(path: string, data: unknown) {
   }
   return response;
 }
+function RunHistory({run, disabled, refresh}: {run: Snapshot['runs'][number]; disabled: boolean; refresh: () => Promise<unknown>}) {
+  const [error,setError] = useState('');
+  return <details className="original"><summary>Run details{run.pinned ? ' · Pinned' : ''}</summary>
+    <p>Run {run.id}</p>
+    {run.history === 'full' ? <button type="button" disabled={disabled} onClick={async () => {
+      try { await post('/api/runs/' + run.id + '/pin',{pinned:!run.pinned}); setError(''); await refresh(); }
+      catch (e) { setError(e instanceof Error ? e.message : 'Pin could not be saved'); }
+    }}>{run.pinned ? 'Unpin run' : 'Pin run'}</button> :
+      <p>{run.history === 'pending' ? 'Cleanup awaiting runner confirmation' : 'Detailed execution history pruned'}</p>}
+    {(error || run.historyError) && <p role="alert">{error || run.historyError}</p>}
+  </details>;
+}
+function HistorySettings({days,disabled,refresh}: {days:number;disabled:boolean;refresh:()=>Promise<unknown>}) {
+  const [value,setValue] = useState(String(days)), [error,setError] = useState('');
+  return <section className="details backup-settings"><h2>Execution history</h2>
+    <p>Pin a run under its message’s Run details to keep its execution history and dedicated workspace. Reports and recorded usage stay in the DM.</p>
+    <form onSubmit={async e => {
+      e.preventDefault();
+      try { await post('/api/retention',{days:Number(value)}); setError(''); await refresh(); }
+      catch (err) { setError(err instanceof Error ? err.message : 'Retention could not be saved'); }
+    }}><label>Days to keep completed run details<input type="number" min="1" required value={value} onChange={e=>setValue(e.target.value)} /></label>
+    <button disabled={disabled || Number(value) === days}>Save history retention</button></form>
+    {error && <p role="alert">{error}</p>}
+  </section>;
+}
 function RecordedUsage({ report }: { report: NonNullable<Snapshot['messages'][number]['evidence']> }) {
   const number = (value: number | null) => value === null ? 'Unknown' : value.toLocaleString();
   return <details className="usage"><summary>Recorded usage · {report.range.start}{report.range.start !== report.range.end && ' – ' + report.range.end}</summary>
@@ -93,6 +118,7 @@ function App() {
   const dm = snapshot?.conversations.find((item) => item.id === selected) ?? snapshot?.conversations[0];
   const schedule = snapshot?.schedules.find(s => s.conversationId === dm?.id && s.state === 'active');
   const messages = snapshot?.messages.filter((message) => message.conversationId === dm?.id) ?? [];
+  const runsByMessage = new Map(snapshot?.runs.map(run => [run.messageId,run]));
   function choose(id: string) {
     if (id !== dm?.id) {
       sessionStorage.setItem('arthegall.draft.' + dm?.id, draft);
@@ -145,6 +171,7 @@ function App() {
         <strong>Daily backup needs attention</strong><p>{snapshot.backups.error}</p>
         {!connections && <button onClick={() => setConnections(true)}>Open backup settings</button>}
       </div>}
+      {connections && <HistorySettings key={snapshot.retentionDays} days={snapshot.retentionDays} disabled={!online || Boolean(snapshot.recovery)} refresh={refresh} />}
       {connections && snapshot.backups && <BackupControls key={JSON.stringify([snapshot.backups.destination,snapshot.backups.keep,snapshot.backups.enabled])}
         status={snapshot.backups} online={online} paused={Boolean(snapshot.recovery)}
         save={async (destination,keep,enabled) => { await post('/api/backups/settings',{destination,keep,enabled}); await refresh(); }}
@@ -181,6 +208,8 @@ function App() {
               <RecordedUsage report={message.evidence} />
               <button type="button" disabled={Boolean(pending)} onClick={() => { setReplyTo(message.id); sessionStorage.setItem('arthegall.reply', message.id); composer.current?.focus(); }}>Reply to report</button>
             </>}
+            {runsByMessage.has(message.id) && <RunHistory run={runsByMessage.get(message.id)!}
+              disabled={!online || Boolean(snapshot.recovery)} refresh={refresh} />}
           </div>
         </article>)}
         {snapshot.schedules.filter(s => (dm.administrator || s.conversationId === dm.id) && s.state === 'pending').map(s =>

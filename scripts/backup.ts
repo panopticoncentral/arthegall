@@ -68,6 +68,25 @@ export async function restoreServer(root: string, source: string, config: { runn
       try {
         if (current.prepare("SELECT value FROM metadata WHERE key='server'").pluck().get() !== manifest.serverId)
           throw new Error('Current server identity differs from the backup');
+        // Operator pins can be newer than this snapshot, including pins on runs
+        // that inventory has yet to reconstruct. Carry outstanding cleanup claims
+        // forward so a reconnect cannot accept a pin after deletion was authorized.
+        if (current.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_history'").get()) {
+          const candidate = new Database(stage);
+          try {
+            candidate.prepare('ATTACH DATABASE ? AS live').run(path);
+            candidate.transaction(() => {
+              candidate.exec(`UPDATE history_policy SET days=(SELECT days FROM live.history_policy);
+                INSERT INTO run_history(run_id,closed_at,pinned,phase)
+                  SELECT run_id,closed_at,pinned,CASE WHEN phase='full' THEN 'full' ELSE 'pending' END
+                  FROM live.run_history WHERE true
+                  ON CONFLICT(run_id) DO UPDATE SET pinned=excluded.pinned,
+                    phase=CASE WHEN excluded.pinned THEN 'full' ELSE excluded.phase END,
+                    closed_at=COALESCE(run_history.closed_at,excluded.closed_at),retry_at=0,error=NULL;`);
+            })();
+          } finally { candidate.close(); }
+          validate(stage);
+        }
         // Fold any old WAL into its own database before replacing its main file.
         if (current.pragma('journal_mode = DELETE', { simple: true }) !== 'delete') throw new Error('Current server is busy');
       } finally { current.close(); }

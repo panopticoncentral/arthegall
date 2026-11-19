@@ -23,6 +23,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
   let stopping = false, working = false, recovered = false;
   let status: 'ready' | 'sign_in_needed' | 'unavailable' = 'unavailable';
   let alive = true, nextConnectAt = 0;
+  let pruning: Promise<void> | undefined;
   let confirmedRun: string | undefined;
   let inventory: ReturnType<RunnerStore['inventory']> | undefined;
   const approvals = new Map<string, { runId: string; resolve: (decision: unknown) => void }>();
@@ -41,15 +42,25 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
     confirmedRun = undefined; inventory = undefined;
     connection.on('open', () => {
       alive = true;
-      send({ type: 'hello', version: 1, runnerId: options.runnerId, inventoryVersion: 1 });
+      send({ type: 'hello', version: 1, runnerId: options.runnerId, inventoryVersion: 1, retentionVersion: 1 });
       send({ type: 'status', version: 1, status });
     });
-    connection.on('message', (raw) => {
+    connection.on('message', async (raw) => {
       if (stopping || socket !== connection) return;
       try {
         const frame = ServerFrame.parse(JSON.parse(raw.toString()));
-        if (frame.type === 'inventory_next') {
+        if (frame.type === 'prune_history') {
+          if (!pruning) {
+            const reply = (error?: string) => {
+              if (connection === socket) send({ type:'prune_result',version:1,runId:frame.runId,dispatchId:frame.dispatchId,error });
+            };
+            pruning = store.prune(frame,options.workspaceRoot).then(() => reply(),
+              error => reply(error instanceof Error ? error.message.slice(0,500) : 'Runner cleanup failed')).finally(() => { pruning = undefined; });
+          }
+        } else if (frame.type === 'inventory_next') {
           confirmedRun = undefined;
+          await pruning;
+          if (stopping || connection !== socket) return;
           inventory ??= store.inventory();
           const item = inventory.next().value;
           if (!item) throw new Error('Unexpected inventory request');
@@ -282,7 +293,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
       socket?.terminate();
       for (const approval of approvals.values()) approval.resolve({ decision: 'decline' });
       await rpc?.close();
-      await active;
+      await active; await pruning;
       await service.close();
     },
   };

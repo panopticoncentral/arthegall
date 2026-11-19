@@ -1,0 +1,60 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { RunnerStore } from '../apps/runner/src/store.js';
+import { ServerStore } from '../apps/server/src/store.js';
+
+test('cleanup requires a closed, unpinned run and agreeing acknowledged journals', async () => {
+  const root = mkdtempSync(join(tmpdir(),'arthegall-retention-'));
+  const server = new ServerStore(join(root,'server.sqlite'));
+  const { runnerId } = server.setup('synthetic-token');
+  const runner = new RunnerStore(join(root,'runner.sqlite'),runnerId);
+  try {
+    const session = server.pair(server.createPairingCode(),'synthetic')!;
+    const {runId} = server.send(session.id,{commandId:randomUUID(),text:'Synthetic request'});
+    const dispatch = runner.accept(server.nextDispatch(runnerId));
+    server.accept(runnerId,dispatch.dispatchId);
+    runner.start(runId);
+    runner.publish(runId,{kind:'progress',text:'Synthetic draft'});
+    const first = runner.nextDelivery()!;
+    server.receive(runnerId,first);
+    runner.acknowledge(first.deliveryId);
+    assert.equal(server.retention.next(runnerId,Date.now()+100*86_400_000),undefined);
+    runner.finish(runId,{status:'completed',message:'Synthetic final'});
+    const terminal = runner.nextDelivery()!;
+    server.receive(runnerId,terminal);
+    const closed = Number(server.db.prepare('SELECT closed_at FROM run_history WHERE run_id=?').pluck().get(runId));
+    const due = closed+30*86_400_000;
+    assert.equal(server.retention.days(),30);
+    assert.throws(()=>server.retention.configure(0));
+    assert.equal(server.retention.next(runnerId,due-1),undefined);
+    server.retention.pin(runId,true);
+    assert.equal(server.retention.next(runnerId,due),undefined);
+    server.retention.pin(runId,false);
+    const prune = server.retention.next(runnerId,due)!;
+    assert.equal(prune.runId,runId);
+    assert.throws(()=>server.retention.pin(runId,true),/expired/);
+    await assert.rejects(runner.prune(prune,root),/acknowledgment/);
+    runner.acknowledge(terminal.deliveryId);
+    await assert.rejects(runner.prune({...prune,journalHash:'0'.repeat(64)},root),/differ/);
+    assert.equal(runner.execution(runId).text,'Synthetic draft');
+    const sharedWorkspace = join(root,dispatch.context.assignmentId);
+    mkdirSync(sharedWorkspace);
+    const file = join(sharedWorkspace,'shared.txt');
+    writeFileSync(file,'Synthetic shared file');
+    await runner.prune(prune,root);
+    // Repeating the request after a lost acknowledgment is safe.
+    await runner.prune(prune,root);
+    server.retention.result(runnerId,runId,dispatch.dispatchId);
+    server.retention.result(runnerId,runId,dispatch.dispatchId);
+    assert.equal(readFileSync(file,'utf8'),'Synthetic shared file');
+    assert.equal(runner.execution(runId).text,'');
+    assert.equal(server.receive(runnerId,first),undefined);
+    assert.throws(()=>server.receive(runnerId,{...first,event:{kind:'progress',text:'Different draft'}}),/different content/);
+    assert.equal(server.receive(runnerId,terminal),undefined);
+    assert.equal(server.retention.next(runnerId,due+60_000),undefined);
+  } finally { runner.close(); server.close(); rmSync(root,{recursive:true,force:true}); }
+});

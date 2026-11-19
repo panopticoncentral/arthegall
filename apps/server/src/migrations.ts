@@ -67,4 +67,23 @@ CREATE TABLE restore_runners (runner_id TEXT PRIMARY KEY REFERENCES runners(id),
 CREATE TABLE restore_closed (run_id TEXT PRIMARY KEY);
 CREATE TABLE restore_seen (runner_id TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(runner_id,run_id));
 CREATE TABLE restore_issues (runner_id TEXT NOT NULL, run_id TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(runner_id,run_id));
+` }, { version: 5, sql: `
+CREATE TABLE history_policy (id INTEGER PRIMARY KEY CHECK(id=1), days INTEGER NOT NULL);
+INSERT INTO history_policy VALUES (1,30);
+-- A restored snapshot can acquire a newer pin before the runner reconstructs its run.
+CREATE TABLE run_history (run_id TEXT PRIMARY KEY, closed_at INTEGER, pinned INTEGER NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL DEFAULT 'full', error TEXT, retry_at INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX events_by_run ON events(json_extract(data,'$.runId'),kind);
+INSERT INTO run_history(run_id,closed_at)
+  SELECT r.id,CASE WHEN r.state='completed' THEN COALESCE(
+    (SELECT unixepoch(MAX(e.created_at))*1000 FROM events e WHERE e.kind='outcome' AND json_extract(e.data,'$.runId')=r.id),
+    CAST(unixepoch('subsec')*1000 AS INTEGER)) END FROM runs r;
+CREATE TRIGGER new_run_history AFTER INSERT ON runs BEGIN
+  INSERT OR IGNORE INTO run_history(run_id) VALUES (new.id);
+END;
+CREATE TRIGGER close_run_history AFTER UPDATE OF state ON runs WHEN new.state='completed' BEGIN
+  UPDATE run_history SET closed_at=COALESCE(closed_at,CAST(unixepoch('subsec')*1000 AS INTEGER)) WHERE run_id=new.id;
+END;
+CREATE INDEX history_expiration ON run_history(pinned,phase,closed_at);
+CREATE INDEX receipts_by_run ON delivery_receipts(runner_id,json_extract(payload,'$.runId'));
 ` }];

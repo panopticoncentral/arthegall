@@ -52,7 +52,7 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
   }
   const report = () => query(`SELECT o.*,r.state,r.user_message_id,r.assistant_message_id,m.conversation_id,m.text,c.evidence,d.id AS dispatch_id
     FROM report_occurrences o JOIN runs r ON r.id=o.run_id JOIN messages m ON m.id=r.assistant_message_id
-    JOIN report_context c ON c.run_id=r.id JOIN dispatches d ON d.run_id=r.id`) as {run_id:string;state:string;assistant_message_id:string;conversation_id:string;period:string;text:string;evidence:string}[];
+    JOIN report_context c ON c.run_id=r.id JOIN dispatches d ON d.run_id=r.id ORDER BY o.due_date`) as {run_id:string;state:string;assistant_message_id:string;conversation_id:string;period:string;text:string;evidence:string}[];
   const destination = join(root,'daily'), offline = join(root,'disconnected');
   mkdirSync(destination);
   const manual = join(destination,'operator-snapshot');
@@ -60,6 +60,12 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
   let local: RunnerStore | undefined;
   try {
     const seed = new ServerStore(path);
+    const pinnedTrace = 'Synthetic retained provider trace';
+    const history = new Database(localPath);
+    try {
+      history.prepare('UPDATE executions SET text=?,turn_id=? WHERE run_id=?').run(pinnedTrace,'synthetic-pinned-turn',prior.run);
+    } finally { history.close(); }
+    seed.reporting.event('activity',{runId:prior.run,message:pinnedTrace});
     // Two earlier days make the packaged scheduler rotate on its first real tick.
     for (const day of ['2020-01-01','2020-01-02']) await dailyCopy({ root, destination, keep: 2, day,
       serverId: prior.ids.server, protectedPaths: [] });
@@ -100,6 +106,13 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     } finally { catalog.close(); }
     expect(Date.now()).toBeLessThan(due.epochMilliseconds);
     expect(report()).toEqual([]);
+    // Pin AFTER the backup. Restoring that snapshot must preserve the hold.
+    await page.getByRole('button',{name:'Rowan',exact:true}).click();
+    const pinnedReport = page.getByRole('article').filter({hasText:'Earlier synthetic report'});
+    await pinnedReport.getByText('Run details',{exact:true}).click();
+    await pinnedReport.getByRole('button',{name:'Pin run',exact:true}).click();
+    await expect(pinnedReport.getByRole('button',{name:'Unpin run'})).toBeVisible();
+    await expect(page.getByLabel('Days to keep completed run details')).toHaveValue('30');
     const period = due.subtract({days:1}).toPlainDate().toString();
     mkdirSync(join(prior.roots.codex,'sessions'),{recursive:true});
     writeFileSync(join(prior.roots.codex,'sessions','fixture.jsonl'),JSON.stringify({timestamp:period+'T20:00:00Z',type:'token_usage_record',
@@ -111,8 +124,62 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     expect(original.text).toBe('Synthetic total: 13');
     local = new RunnerStore(localPath,prior.ids.runner);
     await expect.poll(()=>local!.nextDelivery()).toBeUndefined();
+    // Materialize the following day's occurrence with the same scheduler at an
+    // advanced clock. The running packaged runner executes the queued dispatch.
+    const nextDue = (query('SELECT next_due FROM report_schedules')[0] as {next_due:number}).next_due;
+    const nextDay = new ServerStore(path,()=>new Date(nextDue));
+    try { expect(nextDay.nextDispatch(prior.ids.runner)?.context.occurrence).toBeTruthy(); } finally { nextDay.close(); }
+    await expect.poll(()=>report()[1]?.state).toBe('completed');
+    const second = report()[1]!;
+    const completedReports = [original,second];
+    const secondMessage = page.getByRole('article').filter({hasText:second.text});
+    await secondMessage.getByText('Run details',{exact:true}).click();
+    await secondMessage.getByRole('button',{name:'Pin run',exact:true}).click();
+    await expect(secondMessage.getByRole('button',{name:'Unpin run'})).toBeVisible();
+    const pinnedFile = join(root,'workspaces',prior.assignment,'runs',second.run_id,'intermediate.txt');
+    writeFileSync(pinnedFile,'Synthetic pinned workspace evidence');
+    await expect.poll(()=>local!.nextDelivery()).toBeUndefined();
+    const fullDetails = () => ({
+      execution:local!.execution(second.run_id), file:readFileSync(pinnedFile,'utf8'),
+      deliveries:local!.db.prepare('SELECT * FROM deliveries WHERE run_id=? ORDER BY position').all(second.run_id),
+      receipts:query("SELECT * FROM delivery_receipts WHERE json_extract(payload,'$.runId')=? ORDER BY delivery_id",second.run_id)
+    });
+    const pinnedDetails = fullDetails();
+    expect(pinnedDetails.execution.thread_id).toBeTruthy();
+    expect(pinnedDetails.execution.turn_id).toBeTruthy();
+    const providerRuns = () => readFileSync(join(root,'scheduled-executions'),'utf8').trim().split('\n');
+    expect(providerRuns()).toEqual(completedReports.map(r=>r.run_id));
     const receipts = () => query("SELECT * FROM delivery_receipts WHERE json_extract(payload,'$.runId')=? ORDER BY delivery_id",original.run_id);
-    const originalReceipts = receipts();
+    const beforePruning = receipts() as {delivery_id:string;payload:string}[];
+    const originalDetail = beforePruning.map(row=>JSON.parse(row.payload)).find(d=>['progress','activity'].includes(d.event.kind));
+    expect(originalDetail).toBeTruthy();
+    const workspace = join(root,'workspaces',prior.assignment,'runs',original.run_id);
+    writeFileSync(join(workspace,'intermediate.txt'),'Synthetic temporary execution evidence');
+    // Age these isolated closed runs, then exercise normal automatic cleanup
+    // by shortening the policy from 30 days to 2 in the paired operator UI.
+    const aging = new Database(path);
+    try { aging.prepare('UPDATE run_history SET closed_at=? WHERE run_id IN (?,?,?)')
+      .run(Date.now()-5*86_400_000,prior.run,original.run_id,second.run_id); } finally { aging.close(); }
+    await page.getByLabel('Days to keep completed run details').fill('2');
+    await page.getByRole('button',{name:'Save history retention'}).click();
+    await expect.poll(()=>query('SELECT phase FROM run_history WHERE run_id=?',original.run_id)).toEqual([{phase:'pruned'}]);
+    expect(existsSync(workspace)).toBe(false);
+    expect(local.execution(original.run_id).turn_id).toBeNull();
+    const originalReceipts = receipts() as {delivery_id:string;payload:string}[];
+    expect(originalReceipts.map(row=>row.delivery_id)).toEqual(beforePruning.map(row=>row.delivery_id));
+    expect(originalReceipts.some(row=>JSON.parse(row.payload).kind==='history_receipt')).toBe(true);
+    const pinnedEvidence = () => ({
+      detail:local!.execution(prior.run), trace:query("SELECT data FROM events WHERE kind='activity' AND json_extract(data,'$.runId')=?",prior.run),
+      report:query('SELECT evidence FROM report_context WHERE run_id=?',prior.run),
+      hold:query('SELECT pinned,phase FROM run_history WHERE run_id=?',prior.run)
+    });
+    const preserved = pinnedEvidence();
+    expect(preserved.detail.text).toBe(pinnedTrace);
+    expect(preserved.detail.turn_id).toBe('synthetic-pinned-turn');
+    expect(preserved.trace).toHaveLength(1);
+    expect(preserved.hold).toEqual([{pinned:1,phase:'full'}]);
+    expect(report()).toEqual(completedReports);
+    expect(fullDetails()).toEqual(pinnedDetails);
     const progress = () => query('SELECT id,next_date,next_due FROM report_schedules');
     const originalProgress = progress();
     await stop(runner); await stop(server);
@@ -129,15 +196,21 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
       expect(scheduler.status().error).toBeNull();
       newest = scheduler.status().lastPath!;
       expect(newest).not.toBe(backup);
+      const retained = new Database(join(root,'server','daily-backups.sqlite'),{readonly:true});
+      try {
+        expect(retained.prepare('SELECT name FROM copies WHERE sha256 IS NOT NULL ORDER BY day').pluck().all())
+          .toEqual([backup.split(/[\\/]/).at(-1),newest.split(/[\\/]/).at(-1)]);
+      } finally { retained.close(); }
       expect(existsSync(join(backup,'manifest.json'))).toBe(true);
       const archived = new Database(join(newest,'server.sqlite'),{readonly:true});
-      try { expect(archived.prepare('SELECT run_id FROM report_occurrences').pluck().all()).toEqual([original.run_id]); }
+      try { expect(archived.prepare('SELECT run_id FROM report_occurrences ORDER BY due_date').pluck().all()).toEqual(completedReports.map(r=>r.run_id)); }
       finally { archived.close(); }
     } finally { await scheduler.close(); }
     const bad = join(root,'corrupt'); cpSync(backup,bad,{recursive:true});
     writeFileSync(join(bad,'server.sqlite'),'synthetic corruption');
     expect(()=>cli('restore',bad)).toThrow(/checksum/);
-    expect(report()).toEqual([original]);
+    expect(report()).toEqual(completedReports);
+    expect(fullDetails()).toEqual(pinnedDetails);
     cli('restore',backup);
     server = launch('server');
     await expect.poll(async () => fetch(origin).then(r=>r.status).catch(()=>0)).toBe(200);
@@ -158,7 +231,8 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
       if (frame.type === 'dispatch') unexpectedDispatch = true;
       if (frame.type !== 'inventory_next') return;
       const item = journal.next().value;
-      if (item && !(item.kind === 'delivery' && item.delivery.runId === original.run_id && item.delivery.sequence > 1))
+      const entry = item?.kind === 'delivery' ? item.delivery : item?.kind === 'history_receipt' ? item : undefined;
+      if (item && !(entry && entry.runId === original.run_id && entry.sequence > 1))
         ws.send(JSON.stringify({type:'inventory',version:1,item}));
     });
     await once(ws,'open');
@@ -169,14 +243,22 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     await expect(page.getByText(/Offline — waiting for reconnect/)).toBeVisible();
     runner = launch('runner');
     await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeEnabled();
+    expect(pinnedEvidence()).toEqual(preserved);
+    await expect(page.getByLabel('Days to keep completed run details')).toHaveValue('2');
+    expect(query('SELECT pinned,phase FROM run_history WHERE run_id=?',second.run_id)).toEqual([{pinned:1,phase:'full'}]);
+    expect(query('SELECT phase FROM run_history WHERE run_id=?',original.run_id)).toEqual([{phase:'pruned'}]);
     expect(unexpectedDispatch).toBe(false);
-    expect(report()).toEqual([original]);
+    expect(report()).toEqual(completedReports);
+    expect(fullDetails()).toEqual(pinnedDetails);
     expect(receipts()).toEqual(originalReceipts);
     expect(progress()).toEqual(originalProgress);
     await page.getByRole('button',{name:'Rowan',exact:true}).click();
     await page.reload();
     const recovered = page.getByRole('article').filter({hasText:original.text});
     await expect(recovered).toHaveCount(1);
+    await expect(pinnedReport.getByText('Run details · Pinned')).toBeVisible();
+    await recovered.getByText('Run details',{exact:true}).click();
+    await expect(recovered.getByText('Detailed execution history pruned')).toBeVisible();
     await recovered.getByText('Original message text').click();
     expect(await recovered.locator('.original pre').textContent()).toBe(original.text);
     await recovered.getByText(/Recorded usage/).click();
@@ -188,17 +270,19 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     await page.getByLabel('Message Rowan',{exact:true}).fill('Which synthetic sources had records?');
     await page.getByRole('button',{name:'Queue message',exact:true}).click();
     await expect.poll(()=>query('SELECT reply_to FROM report_context WHERE reply_to=?',original.run_id)).toEqual([{reply_to:original.run_id}]);
-    expect(local.db.prepare('SELECT count(*) FROM executions').pluck().get()).toBe(2);
+    expect(local.db.prepare('SELECT count(*) FROM executions').pluck().get()).toBe(3);
     await page.getByRole('button',{name:'Check runners again'}).click();
     await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeEnabled();
     expect(receipts()).toEqual(originalReceipts);
     // Model a lost receipt after recovery. Ordinary delivery must also deduplicate.
     local.db.prepare("UPDATE deliveries SET acknowledged=0 WHERE run_id=? AND json_extract(payload,'$.event.kind')='outcome'").run(original.run_id);
-    expect(readFileSync(join(root,'calls'),'utf8').split('\n').filter(x=>x==='turn/start')).toHaveLength(1);
+    expect(readFileSync(join(root,'calls'),'utf8').split('\n').filter(x=>x==='turn/start')).toHaveLength(2);
     await page.getByRole('button',{name:'Resume dispatch'}).click();
     await expect.poll(()=>local!.nextDelivery()?.runId).not.toBe(original.run_id);
-    expect(report()).toEqual([original]);
+    expect(report()).toEqual(completedReports);
+    expect(fullDetails()).toEqual(pinnedDetails);
     expect(receipts()).toEqual(originalReceipts);
+    expect(providerRuns()).toEqual(completedReports.map(r=>r.run_id));
     expect(local.db.prepare('SELECT count(*) FROM executions WHERE run_id=?').pluck().get(original.run_id)).toBe(1);
     await stop(runner); await stop(server);
 
