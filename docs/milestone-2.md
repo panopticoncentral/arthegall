@@ -1,5 +1,15 @@
 # On-demand usage reporting
 
+## Milestone 2 acceptance
+
+Milestone 2 passed on the deployed installation. The administrator created the reporting agent and its assignment, then queued an on-demand report. From an already paired browser on a second device, the user approved the assignment’s access to the local runner and read-only usage tool.
+
+The reporting agent completed the report. The server acknowledged both the structured usage evidence and the completed response. The message saved in the agent’s DM matched the runner’s response.
+
+The user asked a follow-up from the same browser. The follow-up run linked back to the original report, and the agent’s `read_context` call returned the exact saved usage evidence. The server acknowledged the answer and saved it in the same DM as the report.
+
+## Using the reporting assignment
+
 In the **Administrator** DM, ask “Create a reporting agent named Rowan. Give Rowan an assignment to report local Codex and Claude usage, and run yesterday’s report.” You can also name an inclusive date range. The server resolves “yesterday” in America/Los_Angeles when the administrator queues the request.
 
 The access card names the agent, assignment, local runner, and read-only usage tool. **Allow for this assignment** covers its on-demand runs and follow-ups until closure. **Allow next run only** binds the grant to the first dispatched run, including redelivery of that dispatch. A subsequent run needs another approval. **Decline** blocks work waiting for that request. A queued report can complete while the browser is closed.

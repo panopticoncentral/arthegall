@@ -145,6 +145,8 @@ Acceptance covers restarting the server and runner and continuing the same conve
 
 Use the administrator conversation to create a reporting agent and assignment, obtain required approvals, and run the usage report on demand through the dedicated tool. Save its result and completion and deliver the report as a DM. Ask a follow-up in that conversation and verify it uses the report's context. Verify that missing sources and unavailable spend remain explicit.
 
+This checkpoint passed on the deployed installation. [Milestone 2 acceptance](milestone-2.md#milestone-2-acceptance)
+
 ### 3. Scheduled reporting and catch-up
 
 Schedule the same assignment to report the previous local calendar day's usage. Execute while the browser is closed and deliver into the existing DM. Verify that a new recurring run receives a fresh provider session with the current instructions and relevant memory. A preference expressed in a reply must carry forward to the next report.
@@ -152,5 +154,7 @@ Schedule the same assignment to report the previous local calendar day's usage. 
 Exercise missed occurrences and confirm that the default produces one current report while recording the missed runs. Verify that explicit backfill follows the assignment's instructions and delivery retries preserve one copy of each result.
 
 ### Release verification
+
+During milestone 2 acceptance, the conversation displayed Markdown formatting characters as plain text. Render Markdown in conversation messages and verify in a browser that formatting survives a reload of the saved DM.
 
 Verify the supporting behavior defined above, including waiting agents releasing capacity, bounded recovery, offline execution and revocation, permission-checked tools, and pending central operations. Verify backup restoration with dispatch reconciliation, retention with pinned evidence and durable deduplication records, and platform installation and update behavior. Public samples and fixtures use synthetic data. These checks substantiate release behavior beyond the initial three milestones.
