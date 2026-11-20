@@ -17,4 +17,5 @@ release/
 test-results-*/
 
 xcuserdata/
+/apps/mac/Arthegall.xcodeproj/project.xcworkspace/contents.xcworkspacedata
 apps/mac/Mac.local.xcconfig
