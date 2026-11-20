@@ -7,6 +7,7 @@ final class ConversationTests: XCTestCase {
         struct Fixture: Decodable {
             let origin: String
             let code: String
+            let backupFolder: String
             let bundle: String
             let adminDM: String
             let reportDM: String
@@ -36,6 +37,7 @@ final class ConversationTests: XCTestCase {
         let header = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Input tokens", "Input tokens")
         XCTAssertTrue(app.staticTexts.matching(header).firstMatch.exists)
         XCTAssertTrue(app.staticTexts["15,000 tokens across 2 providers"].exists)
+        exerciseSettings(in: app, reportDM: fixture.reportDM, backupFolder: fixture.backupFolder)
         let transcript = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         transcript.name = "Agent transcript"
         transcript.lifetime = .keepAlways
@@ -72,5 +74,40 @@ final class ConversationTests: XCTestCase {
         app.menuItems["Unpair This Mac…"].click()
         app.buttons["Unpair"].click()
         XCTAssertTrue(app.buttons["Pair Mac"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    private func exerciseSettings(in app: XCUIApplication, reportDM: String, backupFolder: String) {
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["Save history retention"].waitForExistence(timeout: 5))
+        let retention = app.descendants(matching: .any)["retention-days"].firstMatch
+        retention.click()
+        retention.typeKey("a", modifierFlags: .command)
+        retention.typeText("14")
+        app.buttons["Save history retention"].click()
+        let destination = app.descendants(matching: .any)["backup-folder"].firstMatch
+        destination.click()
+        destination.typeText(backupFolder)
+        app.buttons["Enable daily backups"].click()
+        XCTAssertTrue(app.buttons["Turn off daily backups"].waitForExistence(timeout: 5))
+        app.buttons["Agents"].click()
+        app.buttons["settings-agent-" + reportDM].click()
+        XCTAssertTrue(app.buttons["Edit instructions"].waitForExistence(timeout: 5))
+        app.buttons["Edit instructions"].click()
+        let instructions = app.descendants(matching: .any)["agent-instructions"].firstMatch
+        instructions.click()
+        instructions.typeKey("a", modifierFlags: .command)
+        instructions.typeText("Lead with coverage.")
+        app.buttons["Save revision"].click()
+        XCTAssertTrue(app.staticTexts["Lead with coverage."].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Usage reporting assignment"].click()
+        app.buttons["Schedule daily reports"].click()
+        app.buttons["Review change"].click()
+        let allow = app.buttons["Allow recurring reports"]
+        XCTAssertTrue(allow.waitForExistence(timeout: 5))
+        allow.click()
+        XCTAssertTrue(app.buttons["Change schedule"].waitForExistence(timeout: 5))
+        app.buttons["Back to conversation"].click()
+        XCTAssertTrue(app.staticTexts["Usage by provider"].waitForExistence(timeout: 5))
     }
 }

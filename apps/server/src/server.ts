@@ -1,4 +1,4 @@
-import Fastify, { type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyRequest, type RouteHandlerMethod } from 'fastify';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import staticFiles from '@fastify/static';
@@ -120,7 +120,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       .all(sessionId, Date.now()),
     runnerConnected: [...runners.values()].some((runner) => runner.ready) });
   app.get('/api/snapshot', async request => snapshot(store.session(browserToken(request))!));
-  app.get('/client/v1/snapshot', async request => snapshot(store.session(appToken(request))!));
+  app.get('/client/v1/snapshot', async request => ({ ...snapshot(store.session(appToken(request))!), settingsVersion: 1 }));
   app.post('/client/v1/messages', async request => store.send(store.session(appToken(request))!, request.body));
   app.post('/client/v1/revoke', async request => {
     store.revokeSession(store.session(appToken(request))!);
@@ -131,17 +131,29 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
     return store.events(query.after);
   });
+  const checkApprovalChanges = async () => {
+    if (store.recovery.paused()) throw new Conflict('Review runner records before changing approvals or assignments');
+  };
+  function settingsPost(path: string, handler: RouteHandlerMethod, options = { allowDuringRecovery: false }) {
+    const hooks = options.allowDuringRecovery ? {} : { preHandler: checkApprovalChanges };
+    app.post('/api' + path, hooks, handler);
+    app.post('/client/v1' + path, hooks, handler);
+  }
+  function settingsSession(request: FastifyRequest) {
+    const token = request.routeOptions.url?.startsWith('/client/v1/') ? appToken(request) : browserToken(request);
+    return store.session(token)!;
+  }
   if (backups) {
-    app.post('/api/backups/settings', async request => {
+    settingsPost('/backups/settings', async request => {
       backups.configure(BackupSettings.parse(request.body));
       void backups.tick();
       return { saved: true };
-    });
-    app.post('/api/backups/retry', async () => {
+    }, { allowDuringRecovery: true });
+    settingsPost('/backups/retry', async () => {
       backups.retry();
       void backups.tick();
       return { saved: true };
-    });
+    }, { allowDuringRecovery: true });
   }
   app.post('/api/recovery/resume', async () => {
     store.recovery.resume();
@@ -155,14 +167,13 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     return { saved: true };
   });
   app.post('/api/messages', async (request) => store.send(store.session(browserToken(request))!, SendMessage.parse(request.body)));
-  const checkApprovalChanges = async () => {
-    if (store.recovery.paused()) throw new Conflict('Review runner records before changing approvals or assignments');
-  };
-  app.get('/api/conversations/:id/settings', async request => {
+  const readSettings: RouteHandlerMethod = async request => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     return store.db.transaction(() => ReportingSettings.parse(store.reporting.settings(id)))();
-  });
-  app.post('/api/conversations/:id/definition', { preHandler: checkApprovalChanges }, async request => {
+  };
+  app.get('/api/conversations/:id/settings', readSettings);
+  app.get('/client/v1/conversations/:id/settings', readSettings);
+  settingsPost('/conversations/:id/definition', async request => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { revision, instructions } = EditDefinition.parse(request.body);
     store.db.transaction(() => {
@@ -170,11 +181,11 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       if (!agent.assignmentInstructions || agent.closed) throw new Conflict('Select an open reporting assignment');
       if (agent.instructions === instructions) return;
       if (agent.revision !== revision) throw new Conflict('The agent definition has changed. Cancel to review the latest revision before editing.');
-      store.reporting.revise(agent.agentId, instructions, null, store.session(browserToken(request)));
+      store.reporting.revise(agent.agentId, instructions, null, settingsSession(request));
     })();
     return { saved: true };
   });
-  app.post('/api/conversations/:id/schedule', { preHandler: checkApprovalChanges }, async request => {
+  settingsPost('/conversations/:id/schedule', async request => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { time, activeId, backfill } = ScheduleRequest.pick({ time: true }).extend({ activeId: z.uuid().nullable(), backfill: z.boolean() }).parse(request.body);
     store.db.transaction(() => {
@@ -188,11 +199,11 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       if (!pending && active?.time === time && Boolean(active.backfill) === backfill) return;
       if (pending || (active?.id ?? null) !== activeId) throw new Conflict('The schedule changed. Review the current schedule before proposing another change.');
       const runnerId = store.db.prepare("SELECT value FROM metadata WHERE key='runner'").pluck().get() as string;
-      store.scheduler.propose(agent.assignmentId, runnerId, time, backfill, { sessionId: store.session(browserToken(request))! });
+      store.scheduler.propose(agent.assignmentId, runnerId, time, backfill, { sessionId: settingsSession(request) });
     })();
     return { saved: true };
   });
-  app.post('/api/retention', { preHandler: checkApprovalChanges }, async request => {
+  settingsPost('/retention', async request => {
     const { days } = z.strictObject({days: RetentionDays}).parse(request.body);
     store.retention.configure(days);
     for (const runner of runners.values()) runner.nextCleanup = 0;
@@ -211,21 +222,21 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     store.decide(store.session(browserToken(request))!, id, decision);
     return { saved: true };
   });
-  app.post('/api/conversations/:id/close', { preHandler: checkApprovalChanges }, async (request) => {
+  settingsPost('/conversations/:id/close', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
-    store.reporting.closeAssignment(id, store.session(browserToken(request))!);
+    store.reporting.closeAssignment(id, settingsSession(request));
     return { saved: true };
   });
-  app.post('/api/schedules/:id', { preHandler: checkApprovalChanges }, async (request) => {
+  settingsPost('/schedules/:id', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { decision } = z.strictObject({ decision: z.enum(['accept','decline']) }).parse(request.body);
-    store.scheduler.decide(id, store.session(browserToken(request))!, decision === 'accept');
+    store.scheduler.decide(id, settingsSession(request), decision === 'accept');
     return { saved: true };
   });
-  app.post('/api/access/:id', { preHandler: checkApprovalChanges }, async (request) => {
+  settingsPost('/access/:id', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { decision, duration } = z.strictObject({ decision: z.enum(['accept','decline']), duration: z.enum(['run','assignment']) }).parse(request.body);
-    store.db.transaction(() => store.reporting.decide(store.session(browserToken(request))!, id, decision, duration))();
+    store.db.transaction(() => store.reporting.decide(settingsSession(request), id, decision, duration))();
     return { saved: true };
   });
   app.post('/api/revoke', async (request, reply) => {

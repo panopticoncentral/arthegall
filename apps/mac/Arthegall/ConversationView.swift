@@ -4,6 +4,9 @@ struct ConversationView: View {
     @ObservedObject var model: ConversationModel
     let dm: Conversation
 
+    let sourceMessage: String?
+    let openAssignment: () -> Void
+
     var body: some View {
         let messages = model.snapshot?.messages.filter { $0.conversationId == dm.id } ?? []
         VStack(spacing: 0) {
@@ -18,7 +21,14 @@ struct ConversationView: View {
                     .padding(32)
                 }
             } else {
-                Transcript(dm: dm, messages: messages, runs: model.snapshot?.runs ?? [])
+                Transcript(dm: dm, messages: messages, runs: model.snapshot?.runs ?? [],
+                           sourceMessage: sourceMessage, openAssignment: openAssignment)
+            }
+            if let snapshot = model.snapshot, snapshot.settingsVersion == 1,
+               snapshot.schedules.contains(where: { $0.conversationId == dm.id && $0.state == "pending" }) ||
+               snapshot.grants.contains(where: { $0.conversationId == dm.id }) {
+                Button("Review reporting access", systemImage: "hand.raised", action: openAssignment)
+                    .padding(.vertical, 6)
             }
             Composer(model: model, dm: dm)
                 .frame(maxWidth: WorkspaceStyle.readingWidth)
@@ -38,6 +48,8 @@ private struct Transcript: View {
     let dm: Conversation
     let messages: [Message]
     let runs: [Snapshot.RunSummary]
+    let sourceMessage: String?
+    let openAssignment: () -> Void
     @State private var followsLatest = true
     @State private var lastHeight: CGFloat = 0
 
@@ -48,7 +60,8 @@ private struct Transcript: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
                         ForEach(messages) { message in
-                            MessageRow(dm: dm, message: message, runState: states[message.id])
+                            MessageRow(dm: dm, message: message, runState: states[message.id], openAssignment: openAssignment)
+                                .id(message.id)
                         }
                     }
                     .frame(maxWidth: WorkspaceStyle.readingWidth)
@@ -62,7 +75,12 @@ private struct Transcript: View {
                     Color.clear.frame(height: 1).id("latest")
                 }
                 .coordinateSpace(name: "transcript")
-                .onAppear { proxy.scrollTo("latest", anchor: .bottom) }
+                .onAppear {
+                    if let sourceMessage {
+                        followsLatest = false
+                        proxy.scrollTo(sourceMessage, anchor: .center)
+                    } else { proxy.scrollTo("latest", anchor: .bottom) }
+                }
                 .onPreferenceChange(TranscriptFrame.self) { frame in
                     let visible = frame.maxY <= viewport.size.height + 24
                     if followsLatest && frame.height != lastHeight {
@@ -100,6 +118,7 @@ private struct MessageRow: View {
     let dm: Conversation
     let message: Message
     let runState: String?
+    let openAssignment: () -> Void
 
     private var user: Bool { message.author == "user" }
     private var name: String {
@@ -119,6 +138,9 @@ private struct MessageRow: View {
                     } else {
                         MessageMarkdown(source: message.text).equatable()
                     }
+                }
+                if message.evidence != nil {
+                    Button("Assignment settings", action: openAssignment).buttonStyle(.link)
                 }
                 if !user {
                     MessageStatus(state: runState ?? message.state)
@@ -145,7 +167,8 @@ private struct MessageStatus: View {
         case "complete", "completed": nil
         case "queued": ("Queued for runner", "clock", .secondary)
         case "accepted", "running", "streaming": ("Responding…", "waveform", WorkspaceStyle.pine)
-        case "approval", "awaiting_access": ("Awaiting approval in browser", "hand.raised", .orange)
+        case "awaiting_access": ("Awaiting reporting access", "hand.raised", .orange)
+        case "approval": ("Awaiting approval in browser", "hand.raised", .orange)
         case "waiting_for_user": ("Waiting for your reply", "bubble.left", WorkspaceStyle.pine)
         case "blocked": ("Blocked", "exclamationmark.circle", .red)
         default: (state.replacingOccurrences(of: "_", with: " ").capitalized, "circle", .secondary)

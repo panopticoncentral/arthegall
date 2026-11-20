@@ -25,6 +25,9 @@ struct Message: Decodable, Identifiable {
     let text: String
     let state: String
     let requestedReport: Int?
+    let evidence: ReportEvidence?
+
+    struct ReportEvidence: Decodable {}
 }
 
 struct Snapshot: Decodable {
@@ -33,6 +36,22 @@ struct Snapshot: Decodable {
     let messages: [Message]
     let runnerConnected: Bool
     let runs: [RunSummary]?
+
+    let settingsVersion: Int?
+    let pairings: [SessionSummary]
+    let runners: [Runner]
+    let retentionDays: Int
+    let backups: BackupStatus?
+    let recovery: Recovery?
+    let schedules: [ReportSchedule]
+    let grants: [AccessRequest]
+
+    struct SessionSummary: Decodable {
+        let current: Int
+        let expires: Double
+    }
+    struct Runner: Decodable { let status: String }
+    struct Recovery: Decodable { let ready: Bool }
 
     struct RunSummary: Decodable {
         let messageId: String
@@ -142,6 +161,16 @@ final class Client {
     func send(_ command: SendCommand, _ pairing: Pairing) async throws {
         struct Receipt: Decodable { let runId: UUID }
         _ = try await load(post(request(pairing.origin, "messages", token: pairing.session.token), command), as: Receipt.self)
+    }
+
+    func reportingSettings(_ pairing: Pairing, conversation: String) async throws -> ReportingSettings {
+        try await load(request(pairing.origin, "conversations/" + conversation + "/settings", token: pairing.session.token),
+                       as: ReportingSettings.self)
+    }
+
+    func saveSetting<Body: Encodable & Sendable>(_ pairing: Pairing, path: String, body: Body) async throws {
+        let endpoint = request(pairing.origin, path, token: pairing.session.token)
+        _ = try await load(post(endpoint, body), as: [String: Bool].self)
     }
 
     func revoke(_ pairing: Pairing) async throws {

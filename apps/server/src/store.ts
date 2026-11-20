@@ -348,7 +348,7 @@ export class ServerStore {
       schedules: this.db.prepare(`SELECT p.id,p.assignment_id AS assignmentId,p.runner_id AS runnerId,p.time,p.backfill,p.state,
         s.conversation_id AS conversationId,a.name FROM report_schedules p JOIN assignments s ON s.id=p.assignment_id
         JOIN conversations c ON c.id=s.conversation_id JOIN agents a ON a.id=c.agent_id WHERE p.state IN ('pending','active')`).all(),
-      grants: this.db.prepare(`SELECT p.id,a.name,s.conversation_id AS conversationId FROM report_access p JOIN assignments s ON s.id=p.assignment_id
+      grants: this.db.prepare(`SELECT p.id,p.assignment_id AS assignmentId,p.runner_id AS runnerId,a.name,s.conversation_id AS conversationId FROM report_access p JOIN assignments s ON s.id=p.assignment_id
         JOIN conversations c ON c.id=s.conversation_id JOIN agents a ON a.id=c.agent_id WHERE p.decision IS NULL`).all(),
       messages: this.db.prepare(`SELECT m.id,m.conversation_id AS conversationId,m.author,m.text,m.state,
         c.evidence, EXISTS(SELECT 1 FROM runs r JOIN report_context q ON q.run_id=r.id WHERE r.user_message_id=m.id AND q.requested_range IS NOT NULL) AS requestedReport

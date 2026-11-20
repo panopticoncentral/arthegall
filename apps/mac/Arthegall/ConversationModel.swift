@@ -9,6 +9,8 @@ final class ConversationModel: ObservableObject {
     @Published private(set) var busy = false
     @Published var problem: String?
     @Published var connectionStatus = "Connecting…"
+    @Published private(set) var savingSettings = false
+    @Published var settingsError: String?
     private let client = Client()
 
     init() {
@@ -42,6 +44,7 @@ final class ConversationModel: ObservableObject {
     private func forget() throws {
         if let pairing { try LocalState.remove(pairing) }
         try Credentials.remove()
+        settingsError = nil
         snapshot = nil
         pairing = nil
         local = LocalState()
@@ -81,7 +84,7 @@ final class ConversationModel: ObservableObject {
                         let next = try await client.snapshot(current)
                         try Task.checkCancellation()
                         guard current == pairing else { return }
-                        snapshot = next
+                        if next.cursor >= (snapshot?.cursor ?? 0) { snapshot = next }
                     }
                 } onCancel: { socket.cancel(with: .goingAway, reason: nil) }
             } catch {
@@ -96,6 +99,36 @@ final class ConversationModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+    }
+
+    func reportingSettings(for id: String) async throws -> ReportingSettings {
+        guard let pairing else { throw CancellationError() }
+        let result = try await client.reportingSettings(pairing, conversation: id)
+        try Task.checkCancellation()
+        guard self.pairing == pairing else { throw CancellationError() }
+        return result
+    }
+
+    @discardableResult
+    func saveSetting<Body: Encodable & Sendable>(_ path: String, _ body: Body) async -> Bool {
+        guard let pairing, online, snapshot?.settingsVersion == 1, !savingSettings else { return false }
+        savingSettings = true
+        settingsError = nil
+        defer { savingSettings = false }
+        do {
+            try await client.saveSetting(pairing, path: path, body: body)
+        } catch {
+            if self.pairing == pairing { settingsError = error.localizedDescription }
+            return false
+        }
+        do {
+            let latest = try await client.snapshot(pairing)
+            guard self.pairing == pairing else { return false }
+            if latest.cursor >= (snapshot?.cursor ?? 0) { snapshot = latest }
+        } catch {
+            if self.pairing == pairing { settingsError = "Change saved. Could not refresh settings: " + error.localizedDescription }
+        }
+        return self.pairing == pairing
     }
 
     @discardableResult

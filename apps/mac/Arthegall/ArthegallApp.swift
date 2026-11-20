@@ -4,18 +4,33 @@ import SwiftUI
 struct ArthegallApp: App {
     @StateObject private var model = ConversationModel()
 
+    @State private var settings: SettingsPage?
+    @Environment(\.openWindow) private var openWindow
+
     var body: some Scene {
         Window("Arthegall", id: "conversations") {
-            ContentView(model: model)
+            ContentView(model: model, settings: $settings)
                 .frame(minWidth: 660, minHeight: 440)
         }
         .windowToolbarStyle(.unified)
         .defaultSize(width: 1000, height: 700)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    openWindow(id: "conversations")
+                    settings = .system
+                }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(model.pairing == nil)
+            }
+        }
     }
 }
 
 private struct ContentView: View {
     @ObservedObject var model: ConversationModel
+    @Binding var settings: SettingsPage?
+    @State private var sourceMessage: String?
     @State private var generation = UUID()
     @State private var confirmUnpair = false
 
@@ -26,6 +41,15 @@ private struct ContentView: View {
             } else {
                 PairingView(model: model)
             }
+            if settings != .system, model.snapshot?.settingsVersion == 1,
+               let backups = model.snapshot?.backups, backups.enabled, let error = backups.error {
+                HStack {
+                    Label("Daily backup needs attention", systemImage: "exclamationmark.triangle")
+                    Text(verbatim: error).lineLimit(2)
+                    Spacer()
+                    Button("Open backup settings") { settings = .system }
+                }.padding(10)
+            }
             if let problem = model.problem {
                 Label(problem, systemImage: "exclamationmark.circle")
                     .foregroundStyle(.primary).textSelection(.enabled)
@@ -33,8 +57,17 @@ private struct ContentView: View {
                     .background(.red.opacity(0.09))
             }
         }
+        .onChange(of: model.pairing) { _, _ in settings = nil; sourceMessage = nil }
+        .onChange(of: settings) { _, _ in model.settingsError = nil }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in generation = UUID() }
         .task(id: (model.pairing?.session.sessionId.uuidString ?? "") + generation.uuidString) { await model.follow() }
+    }
+
+    private func openConversation(_ id: String, message: String? = nil) {
+        guard model.local.pending == nil || model.selected == id else { return }
+        model.select(id)
+        sourceMessage = message
+        settings = nil
     }
 
     private func workspace(_ pairing: Pairing) -> some View {
@@ -50,7 +83,9 @@ private struct ContentView: View {
                     }
                 }
                 .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 22)
-                List(selection: Binding(get: { model.selected }, set: { model.select($0) })) {
+                List(selection: Binding(get: { settings == nil ? model.selected : nil }, set: { id in
+                    if let id { openConversation(id) }
+                })) {
                     Section("Direct messages") {
                         ForEach(conversations) { dm in
                             HStack(spacing: 9) {
@@ -76,14 +111,38 @@ private struct ContentView: View {
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
                 .disabled(model.local.pending != nil)
+                Divider()
+                Button {
+                    settings = .system
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain).padding(14)
+                .accessibilityIdentifier("workspace-settings")
             }
             .background(WorkspaceStyle.sidebar.ignoresSafeArea())
             .tint(WorkspaceStyle.pine)
             .navigationSplitViewColumnWidth(min: 176, ideal: 215, max: 300)
         } detail: {
-            if let dm = conversations.first(where: { $0.id == model.selected }) {
-                ConversationView(model: model, dm: dm)
+            if let settings {
+                WorkspaceSettings(model: model, page: settings, navigate: { self.settings = $0 },
+                                  back: { self.settings = nil }, openConversation: openConversation,
+                                  unpair: { confirmUnpair = true })
+            } else if let dm = conversations.first(where: { $0.id == model.selected }) {
+                ConversationView(model: model, dm: dm, sourceMessage: sourceMessage,
+                                 openAssignment: { settings = .assignment(dm.id) })
                     .id(dm.id)
+                    .toolbar {
+                        if dm.administrator == 0 {
+                            ToolbarItem {
+                                Button("Agent settings", systemImage: "slider.horizontal.3") { settings = .agent(dm.id) }
+                            }
+                            ToolbarItem {
+                                Button("Assignment settings", systemImage: "calendar") { settings = .assignment(dm.id) }
+                            }
+                        }
+                    }
                     .navigationTitle(dm.name)
                     .navigationSubtitle(dm.closed != 0 ? "Closed conversation" : "Direct message")
             } else {

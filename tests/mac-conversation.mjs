@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
+import { DailyBackups } from '../dist/scripts/daily-backups.js';
 import { ServerStore } from '../dist/apps/server/src/store.js';
 import { createServer } from '../dist/apps/server/src/server.js';
 import { RunnerStore } from '../dist/apps/runner/src/store.js';
@@ -12,7 +13,7 @@ import { startRunner } from '../dist/apps/runner/src/runner.js';
 import { availablePort } from '../dist/tests/helpers/port.js';
 
 const root = mkdtempSync(join(tmpdir(), 'arthegall-mac-ui-'));
-const store = new ServerStore(join(root, 'server.sqlite'));
+const store = new ServerStore(join(root, 'server', 'server.sqlite'));
 const ids = store.setup('synthetic');
 let reportDM;
 if (!process.argv.includes('--session-only')) {
@@ -32,7 +33,11 @@ if (!process.argv.includes('--session-only')) {
 }
 const port = await availablePort();
 const origin = 'http://127.0.0.1:' + port;
-const server = await createServer(store, origin);
+const backupFolder = join(root, 'backups');
+mkdirSync(backupFolder, { mode: 0o700 });
+const backups = new DailyBackups(root, ids.serverId, [join(root, 'server')], () => store.recovery.paused(),
+  () => store.reporting.event('backup_status', {}));
+const server = await createServer(store, origin, undefined, backups);
 let sends = 0;
 let clientClosed = false;
 // The sandboxed XCTest runner can read the fixture manifest and contact loopback.
@@ -55,7 +60,7 @@ const runner = await startRunner(local, { runnerId: ids.runnerId, token: 'synthe
 const control = store.pair(store.createPairingCode(), 'synthetic');
 const bundle = 'org.arthegall.fixture.t' + randomUUID();
 const manifest = join(root, 'fixture.json');
-writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode(), bundle, adminDM: ids.conversationId, reportDM, closedURL: origin + closedPath }), { mode: 0o600 });
+writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode(), bundle, backupFolder, adminDM: ids.conversationId, reportDM, closedURL: origin + closedPath }), { mode: 0o600 });
 const timer = setInterval(() => {
   if (!clientClosed) return;
   const approval = store.snapshot().approvals[0];
@@ -75,7 +80,7 @@ try {
       <key>CFBundlePackageType</key><string>APPL</string></dict></plist>`);
     const probe = join(contents, 'MacOS', 'SessionProbe');
     execFileSync('xcrun', ['swiftc', '-parse-as-library', '-module-cache-path', resolve('dist/mac-probe-cache'),
-      ...['Client', 'Storage', 'ConversationModel'].map(name => 'apps/mac/Arthegall/' + name + '.swift'),
+      ...['Client', 'SettingsData', 'Storage', 'ConversationModel'].map(name => 'apps/mac/Arthegall/' + name + '.swift'),
       'tests/fixtures/MacSessionProbe.swift', '-o', probe]);
     execFileSync('codesign', ['--force', '--sign', '-', join(root, 'SessionProbe.app')]);
     await run(probe, [manifest, 'pair']);
@@ -91,6 +96,14 @@ try {
       '-destination', 'platform=macOS,arch=' + (process.arch === 'arm64' ? 'arm64' : 'x86_64'),
       '-derivedDataPath', resolve('dist/mac-ui'), '-parallel-testing-enabled', 'NO',
       'ARTHEGALL_APP_ID=' + bundle, 'test'], { ...process.env, TEST_RUNNER_ARTHEGALL_MAC_FIXTURE: manifest });
+  }
+  if (reportDM) {
+    assert.equal(store.retention.days(), 14);
+    assert.equal(backups.status().destination, backupFolder);
+    assert.ok(backups.status().lastPath);
+    assert.equal(backups.status().error, null);
+    assert.equal(store.reporting.settings(reportDM).instructions, 'Lead with coverage.');
+    assert.equal(store.db.prepare("SELECT COUNT(*) FROM report_schedules WHERE state='active'").pluck().get(), 1);
   }
   assert.equal(sends, 2);
   assert.equal(store.db.prepare('SELECT COUNT(*) FROM dispatches').pluck().get(), 1);

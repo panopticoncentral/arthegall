@@ -113,7 +113,7 @@ export const Snapshot = z.object({
   retentionDays: RetentionDays,
   conversations: z.array(z.object({ id: Id, name: z.string(), administrator: z.number(), closed: z.number() })),
   schedules: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, conversationId: Id, name: z.string(), time: z.string(), backfill: z.number(), state: z.enum(['pending','active']) })),
-  grants: z.array(z.object({ id: Id, name: z.string(), conversationId: Id })),
+  grants: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, name: z.string(), conversationId: Id })),
   recovery: z.object({ runners: z.array(z.object({ id: Id, status: z.string() })),
     issues: z.array(z.object({ runId: Id, reason: z.string() })), ready: z.boolean() }).nullable(),
   cursor: z.number().int().nonnegative(), runnerConnected: z.boolean(),
