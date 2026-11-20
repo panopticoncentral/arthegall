@@ -14,10 +14,33 @@ import { availablePort } from '../dist/tests/helpers/port.js';
 const root = mkdtempSync(join(tmpdir(), 'arthegall-mac-ui-'));
 const store = new ServerStore(join(root, 'server.sqlite'));
 const ids = store.setup('synthetic');
+let reportDM;
+if (!process.argv.includes('--session-only')) {
+  reportDM = store.reporting.create('Rowan', 'Prepare usage reports.', 'Report local activity.', null);
+  const insert = store.db.prepare('INSERT INTO messages(id,conversation_id,author,text,state) VALUES (?,?,?,?,?)');
+  insert.run(randomUUID(), reportDM, 'user', 'How did usage compare across providers?', 'complete');
+  insert.run(randomUUID(), reportDM, 'assistant', [
+    '## Usage by provider', '',
+    'Codex accounted for **two thirds** of the total. Both sources reported local records.', '',
+    '| Provider | Input tokens | Output tokens |', '| --- | ---: | ---: |',
+    '| Codex | 8,000 | 2,000 |', '| Claude | 4,000 | 1,000 |', '',
+    '### Collection notes', '',
+    '- Cached input is included in the input column.',
+    '- Totals cover the same reporting period.', '',
+    '```text', '15,000 tokens across 2 providers', '```',
+  ].join('\n'), 'completed');
+}
 const port = await availablePort();
 const origin = 'http://127.0.0.1:' + port;
 const server = await createServer(store, origin);
 let sends = 0;
+let clientClosed = false;
+// The sandboxed XCTest runner can read the fixture manifest and contact loopback.
+const closedPath = '/fixture/' + randomUUID() + '/closed';
+server.post(closedPath, async () => {
+  clientClosed = true;
+  return { ok: true };
+});
 server.addHook('onSend', async (request, reply, payload) => {
   if (request.routeOptions.url === '/client/v1/messages' && ++sends === 1) {
     // The receipt has committed. Lose only the first HTTP acknowledgment.
@@ -32,9 +55,9 @@ const runner = await startRunner(local, { runnerId: ids.runnerId, token: 'synthe
 const control = store.pair(store.createPairingCode(), 'synthetic');
 const bundle = 'org.arthegall.fixture.t' + randomUUID();
 const manifest = join(root, 'fixture.json');
-writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode(), bundle }), { mode: 0o600 });
+writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode(), bundle, adminDM: ids.conversationId, reportDM, closedURL: origin + closedPath }), { mode: 0o600 });
 const timer = setInterval(() => {
-  if (!existsSync(join(root, 'closed'))) return;
+  if (!clientClosed) return;
   const approval = store.snapshot().approvals[0];
   if (approval) store.decide(control.id, approval.id, 'decline');
   if (store.snapshot().messages.some(m => m.text.startsWith('Synthetic approval declined'))) {
@@ -57,7 +80,7 @@ try {
     execFileSync('codesign', ['--force', '--sign', '-', join(root, 'SessionProbe.app')]);
     await run(probe, [manifest, 'pair']);
     await run(probe, [manifest, 'retry']);
-    writeFileSync(join(root, 'closed'), '');
+    clientClosed = true;
     for (let check = 0; check < 150 && !existsSync(join(root, 'finished')); check++) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
@@ -71,7 +94,7 @@ try {
   }
   assert.equal(sends, 2);
   assert.equal(store.db.prepare('SELECT COUNT(*) FROM dispatches').pluck().get(), 1);
-  assert.equal(store.db.prepare("SELECT COUNT(*) FROM messages WHERE author='user'").pluck().get(), 1);
+  assert.equal(store.db.prepare("SELECT COUNT(*) FROM messages WHERE author='user' AND conversation_id=?").pluck().get(ids.conversationId), 1);
   assert.equal(store.db.prepare('SELECT COUNT(*) FROM command_receipts').pluck().get(), 1);
   console.log('Verified two submissions, one message, one receipt and one dispatch.');
 } finally {

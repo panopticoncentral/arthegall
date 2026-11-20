@@ -15,6 +15,7 @@ struct Conversation: Decodable, Identifiable {
     let id: String
     let name: String
     let closed: Int
+    let administrator: Int?
 }
 
 struct Message: Decodable, Identifiable {
@@ -23,6 +24,7 @@ struct Message: Decodable, Identifiable {
     let author: String
     let text: String
     let state: String
+    let requestedReport: Int?
 }
 
 struct Snapshot: Decodable {
@@ -30,6 +32,12 @@ struct Snapshot: Decodable {
     let conversations: [Conversation]
     let messages: [Message]
     let runnerConnected: Bool
+    let runs: [RunSummary]?
+
+    struct RunSummary: Decodable {
+        let messageId: String
+        let state: String
+    }
 }
 
 struct ClientEvent: Decodable {
