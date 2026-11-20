@@ -1,0 +1,66 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 77;
+    objects = {
+        A00000000000000000000001 = {
+            isa = PBXProject;
+            buildConfigurationList = A00000000000000000000002;
+            developmentRegion = en;
+            hasScannedForEncodings = 0;
+            knownRegions = (en, Base);
+            mainGroup = A00000000000000000000003;
+            preferredProjectObjectVersion = 77;
+            productRefGroup = A00000000000000000000004;
+            projectDirPath = "";
+            projectRoot = "";
+            targets = (A00000000000000000000005, B00000000000000000000001);
+        };
+        A00000000000000000000002 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000010,A00000000000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000003 = { isa = PBXGroup; children = (A00000000000000000000006,B00000000000000000000002,A00000000000000000000014,A00000000000000000000004); sourceTree = "<group>"; };
+        A00000000000000000000004 = { isa = PBXGroup; children = (A00000000000000000000007,B00000000000000000000003); name = Products; sourceTree = "<group>"; };
+        A00000000000000000000005 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A00000000000000000000008;
+            buildPhases = (A00000000000000000000009);
+            buildRules = ();
+            dependencies = ();
+            fileSystemSynchronizedGroups = (A00000000000000000000006);
+            name = Arthegall;
+            productName = Arthegall;
+            productReference = A00000000000000000000007;
+            productType = "com.apple.product-type.application";
+        };
+        A00000000000000000000006 = { isa = PBXFileSystemSynchronizedRootGroup; path = Arthegall; sourceTree = "<group>"; };
+        A00000000000000000000007 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = Arthegall.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        A00000000000000000000008 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012,A00000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000009 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000010 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; };
+        A00000000000000000000011 = { isa = XCBuildConfiguration; name = Release; buildSettings = { SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 5.0; }; };
+        A00000000000000000000012 = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = A00000000000000000000014; buildSettings = {}; };
+        A00000000000000000000013 = { isa = XCBuildConfiguration; name = Release; baseConfigurationReference = A00000000000000000000014; buildSettings = {}; };
+        A00000000000000000000014 = { isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Mac.xcconfig; sourceTree = SOURCE_ROOT; };
+        B00000000000000000000001 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = B00000000000000000000004;
+            buildPhases = (B00000000000000000000005);
+            buildRules = ();
+            dependencies = (B00000000000000000000006);
+            fileSystemSynchronizedGroups = (B00000000000000000000002);
+            name = ArthegallUITests;
+            productName = ArthegallUITests;
+            productReference = B00000000000000000000003;
+            productType = "com.apple.product-type.bundle.ui-testing";
+        };
+        B00000000000000000000002 = { isa = PBXFileSystemSynchronizedRootGroup; path = ArthegallUITests; sourceTree = "<group>"; };
+        B00000000000000000000003 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ArthegallUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        B00000000000000000000004 = { isa = XCConfigurationList; buildConfigurations = (B00000000000000000000007,B00000000000000000000008); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        B00000000000000000000005 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        B00000000000000000000006 = { isa = PBXTargetDependency; target = A00000000000000000000005; targetProxy = B00000000000000000000009; };
+        B00000000000000000000007 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { GENERATE_INFOPLIST_FILE = YES; PRODUCT_NAME = ArthegallUITests; PRODUCT_BUNDLE_IDENTIFIER = org.arthegall.uitests; TEST_TARGET_NAME = Arthegall; ALWAYS_SEARCH_USER_PATHS = NO; }; };
+        B00000000000000000000008 = { isa = XCBuildConfiguration; name = Release; buildSettings = { GENERATE_INFOPLIST_FILE = YES; PRODUCT_NAME = ArthegallUITests; PRODUCT_BUNDLE_IDENTIFIER = org.arthegall.uitests; TEST_TARGET_NAME = Arthegall; ALWAYS_SEARCH_USER_PATHS = NO; }; };
+        B00000000000000000000009 = { isa = PBXContainerItemProxy; containerPortal = A00000000000000000000001; proxyType = 1; remoteGlobalIDString = A00000000000000000000005; remoteInfo = Arthegall; };
+    };
+    rootObject = A00000000000000000000001;
+}

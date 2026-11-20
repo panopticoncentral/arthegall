@@ -15,3 +15,5 @@ test-results/
 
 release/
 test-results-*/
+
+xcuserdata/

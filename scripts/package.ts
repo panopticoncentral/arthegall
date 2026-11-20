@@ -16,7 +16,10 @@ for (const workspace of ['apps/server', 'apps/runner', 'apps/web', 'packages/con
   mkdirSync(join(destination, workspace), { recursive: true });
   copyFileSync(join(workspace, 'package.json'), join(destination, workspace, 'package.json'));
 }
-cpSync('dist', join(destination, 'dist'), { recursive: true, filter: (path) => !path.startsWith('dist/tests') });
+// The Mac app and its Xcode test results also build under dist.
+for (const directory of ['apps', 'packages', 'scripts', 'web']) {
+  cpSync(join('dist', directory), join(destination, 'dist', directory), { recursive: true });
+}
 // Resolve production dependencies from the same lockfile. Native install scripts
 // run with the pinned build runtime on the target OS and architecture.
 execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], { cwd: destination, stdio: 'inherit', shell: process.platform === 'win32' });

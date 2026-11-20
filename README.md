@@ -6,6 +6,8 @@ The administrator can create a Codex reporting agent, request scoped access to t
 
 See [daily reports and preferences](docs/milestone-3.md), [reporting and coverage](docs/milestone-2.md), [macOS installation](docs/macos-installation.md), [design](docs/design.md), [architecture](docs/architecture.md), and [milestone 1 verification](docs/milestone-1-progress.md).
 
+The [Mac client development guide](docs/mac-client.md) covers building the SwiftUI app and pairing it with a development server.
+
 ## Run locally
 
 Use the Node version in `.nvmrc` and the npm version in `package.json`. Install Codex separately and sign in with `codex login` on the runner machine.

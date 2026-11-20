@@ -70,3 +70,60 @@ test('real runner connection persists fake-provider response through server rest
     assert.equal(store.events(0).filter((event) => (event as { kind: string }).kind === 'outcome').length, 1);
   } finally { await runner.close(); local.close(); await server.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test('installed client v1 uses an independent expiring pairing for HTTP and live events', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'arthegall-app-test-'));
+  const store = new ServerStore(join(root, 'server.sqlite'));
+  const ids = store.setup('synthetic');
+  const port = await availablePort();
+  const origin = 'http://127.0.0.1:' + port;
+  const server = await createServer(store, origin);
+  const version = { 'x-arthegall-client': '1' };
+  const pair = (code: string) => server.inject({ method: 'POST', url: '/client/v1/pair',
+    headers: { ...version, host: new URL(origin).host }, payload: { code } });
+  let socket: WebSocket | undefined;
+  try {
+    await server.listen({ host: '127.0.0.1', port });
+    const old = store.pair(store.createPairingCode(), 'synthetic')!;
+    const host = { host: new URL(origin).host };
+    const expired = store.createPairingCode(Date.now() - 11 * 60_000);
+    assert.equal((await pair(expired)).statusCode, 400);
+    const code = store.createPairingCode();
+    const response = await pair(code);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['set-cookie'], undefined);
+    const app = response.json<{ sessionId: string; token: string; version: number }>();
+    assert.equal(app.version, 1);
+    assert.equal(store.session(app.token), app.sessionId);
+    assert.equal((await pair(code)).statusCode, 400);
+    const headers = { ...host, ...version, authorization: 'Bearer ' + app.token };
+    const snapshot = await server.inject({ url: '/client/v1/snapshot', headers });
+    assert.equal(snapshot.statusCode, 200);
+    assert.equal(snapshot.json().conversations[0].id, ids.conversationId);
+    assert.equal((await server.inject({ url: '/api/snapshot', headers: { ...host, cookie: 'arthegall=' + app.token } })).statusCode, 401);
+    assert.equal((await server.inject({ url: '/client/v1/snapshot', headers: { ...headers, authorization: 'Bearer ' + old.token } })).statusCode, 401);
+    assert.equal((await server.inject({ url: '/client/v1/snapshot', headers: { ...headers, 'x-arthegall-client': '2' } })).statusCode, 400);
+    const events: { sequence: number; kind: string }[] = [];
+    socket = new WebSocket(origin.replace('http:', 'ws:') + '/client/v1/events?after=' + snapshot.json().cursor, { headers });
+    socket.on('message', raw => events.push(JSON.parse(raw.toString())));
+    await until(() => socket?.readyState === WebSocket.OPEN);
+    const payload = { commandId: randomUUID(), conversationId: ids.conversationId, text: 'Synthetic Mac message' };
+    const send = () => server.inject({ method: 'POST', url: '/client/v1/messages', headers, payload });
+    const accepted = await send();
+    assert.equal(accepted.statusCode, 200);
+    assert.deepEqual((await send()).json(), accepted.json());
+    await until(() => events.some(e => e.kind === 'message_accepted'));
+    assert.equal(store.db.prepare('SELECT count(*) FROM dispatches').pluck().get(), 1);
+    assert.equal((await server.inject({ method: 'POST', url: '/client/v1/revoke', headers })).statusCode, 200);
+    await until(() => socket?.readyState === WebSocket.CLOSED);
+    assert.equal((await send()).statusCode, 401);
+    assert.equal(store.session(old.token), old.id);
+    const expiredSession = store.pair(store.createPairingCode(), 'fixture', Date.now(), 'app')!;
+    store.db.prepare('UPDATE browser_sessions SET expires=? WHERE id=?').run(Date.now() - 1, expiredSession.id);
+    assert.equal((await server.inject({ url: '/client/v1/snapshot', headers: { ...headers,
+      authorization: 'Bearer ' + expiredSession.token } })).statusCode, 401);
+  } finally {
+    socket?.terminate();
+    await server.close(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});

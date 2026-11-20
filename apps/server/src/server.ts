@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import staticFiles from '@fastify/static';
@@ -69,15 +69,31 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     browsers.clear(); runners.clear();
     for (const socket of sockets) socket.terminate();
   });
+  // The prefix is part of the hashed secret. A cookie cannot authenticate an app or vice versa.
+  function appToken(request: FastifyRequest) {
+    const auth = request.headers.authorization;
+    return auth?.startsWith('Bearer app.') ? auth.slice(7) : '';
+  }
+  function browserToken(request: FastifyRequest) {
+    const token = request.cookies.arthegall ?? '';
+    return token.startsWith('app.') ? '' : token;
+  }
   app.addHook('onRequest', async (request, reply) => {
     if (request.headers.host !== expected.host) return reply.code(403).send({ error: 'Unrecognized host' });
     reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
     if (request.url.startsWith('/runner')) return;
+    const route = request.routeOptions.url;
+    if (route?.startsWith('/client/v1/')) {
+      if (request.headers.origin && request.headers.origin !== expected.origin) return reply.code(403).send({ error: 'Unrecognized origin' });
+      if (request.headers['x-arthegall-client'] !== '1') return reply.code(400).send({ error: 'Client protocol version 1 required' });
+      if (route !== '/client/v1/pair' && !store.session(appToken(request))) return reply.code(401).send({ error: 'Pair this app to continue' });
+      return;
+    }
     if ((!['GET', 'HEAD'].includes(request.method) || request.url.startsWith('/events')) && request.headers.origin !== expected.origin) return reply.code(403).send({ error: 'Unrecognized origin' });
     if (request.url.startsWith('/api/') && request.url !== '/api/pair') {
-      if (!store.session(request.cookies.arthegall ?? '')) return reply.code(401).send({ error: 'Pair this browser to continue' });
+      if (!store.session(browserToken(request))) return reply.code(401).send({ error: 'Pair this browser to continue' });
     }
   });
   app.setErrorHandler((error, _request, reply) => {
@@ -85,17 +101,32 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     if (error instanceof Conflict) return reply.code(409).send({ error: error.message });
     return reply.code(500).send({ error: 'Request could not be saved. It is safe to retry the same command.' });
   });
+  const pairingCode = z.strictObject({ code: z.string().trim().min(1).max(128) });
+  app.post('/client/v1/pair', async (request, reply) => {
+    const { code } = pairingCode.parse(request.body);
+    const session = store.pair(code, request.ip, Date.now(), 'app');
+    if (!session) return reply.code(400).send({ error: 'Code invalid, expired, or temporarily rate limited' });
+    return { version: 1, sessionId: session.id, token: session.token };
+  });
   app.post('/api/pair', async (request, reply) => {
-    const { code } = z.strictObject({ code: z.string().trim().min(1).max(128) }).parse(request.body);
+    const { code } = pairingCode.parse(request.body);
     const session = store.pair(code, request.ip);
     if (!session) return reply.code(400).send({ error: 'Code invalid, expired, or temporarily rate limited' });
     reply.setCookie('arthegall', session.token, { path: '/', httpOnly: true, sameSite: 'strict', secure: expected.protocol === 'https:', maxAge: 365 * 24 * 60 * 60 });
     return { paired: true };
   });
-  app.get('/api/snapshot', async request => Snapshot.parse({ ...store.snapshot(), backups: backups?.status(),
+  const snapshot = (sessionId: string) => Snapshot.parse({ ...store.snapshot(), backups: backups?.status(),
     pairings: store.db.prepare('SELECT expires,id=? AS current FROM browser_sessions WHERE expires>? AND revoked=0 ORDER BY current DESC,expires DESC')
-      .all(store.session(request.cookies.arthegall ?? ''), Date.now()),
-    runnerConnected: [...runners.values()].some((runner) => runner.ready) }));
+      .all(sessionId, Date.now()),
+    runnerConnected: [...runners.values()].some((runner) => runner.ready) });
+  app.get('/api/snapshot', async request => snapshot(store.session(browserToken(request))!));
+  app.get('/client/v1/snapshot', async request => snapshot(store.session(appToken(request))!));
+  app.post('/client/v1/messages', async request => store.send(store.session(appToken(request))!, request.body));
+  app.post('/client/v1/revoke', async request => {
+    store.revokeSession(store.session(appToken(request))!);
+    tick();
+    return { revoked: true };
+  });
   app.get('/api/activity', async (request) => {
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
     return store.events(query.after);
@@ -123,7 +154,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     }
     return { saved: true };
   });
-  app.post('/api/messages', async (request) => store.send(store.session(request.cookies.arthegall ?? '')!, SendMessage.parse(request.body)));
+  app.post('/api/messages', async (request) => store.send(store.session(browserToken(request))!, SendMessage.parse(request.body)));
   const checkApprovalChanges = async () => {
     if (store.recovery.paused()) throw new Conflict('Review runner records before changing approvals or assignments');
   };
@@ -139,7 +170,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       if (!agent.assignmentInstructions || agent.closed) throw new Conflict('Select an open reporting assignment');
       if (agent.instructions === instructions) return;
       if (agent.revision !== revision) throw new Conflict('The agent definition has changed. Cancel to review the latest revision before editing.');
-      store.reporting.revise(agent.agentId, instructions, null, store.session(request.cookies.arthegall ?? ''));
+      store.reporting.revise(agent.agentId, instructions, null, store.session(browserToken(request)));
     })();
     return { saved: true };
   });
@@ -157,7 +188,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       if (!pending && active?.time === time && Boolean(active.backfill) === backfill) return;
       if (pending || (active?.id ?? null) !== activeId) throw new Conflict('The schedule changed. Review the current schedule before proposing another change.');
       const runnerId = store.db.prepare("SELECT value FROM metadata WHERE key='runner'").pluck().get() as string;
-      store.scheduler.propose(agent.assignmentId, runnerId, time, backfill, { sessionId: store.session(request.cookies.arthegall ?? '')! });
+      store.scheduler.propose(agent.assignmentId, runnerId, time, backfill, { sessionId: store.session(browserToken(request))! });
     })();
     return { saved: true };
   });
@@ -177,34 +208,33 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   app.post('/api/approvals/:id', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { decision } = z.strictObject({ decision: z.enum(['accept', 'decline']) }).parse(request.body);
-    store.decide(store.session(request.cookies.arthegall ?? '')!, id, decision);
+    store.decide(store.session(browserToken(request))!, id, decision);
     return { saved: true };
   });
   app.post('/api/conversations/:id/close', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
-    store.reporting.closeAssignment(id, store.session(request.cookies.arthegall ?? '')!);
+    store.reporting.closeAssignment(id, store.session(browserToken(request))!);
     return { saved: true };
   });
   app.post('/api/schedules/:id', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { decision } = z.strictObject({ decision: z.enum(['accept','decline']) }).parse(request.body);
-    store.scheduler.decide(id, store.session(request.cookies.arthegall ?? '')!, decision === 'accept');
+    store.scheduler.decide(id, store.session(browserToken(request))!, decision === 'accept');
     return { saved: true };
   });
   app.post('/api/access/:id', { preHandler: checkApprovalChanges }, async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     const { decision, duration } = z.strictObject({ decision: z.enum(['accept','decline']), duration: z.enum(['run','assignment']) }).parse(request.body);
-    store.db.transaction(() => store.reporting.decide(store.session(request.cookies.arthegall ?? '')!, id, decision, duration))();
+    store.db.transaction(() => store.reporting.decide(store.session(browserToken(request))!, id, decision, duration))();
     return { saved: true };
   });
   app.post('/api/revoke', async (request, reply) => {
-    store.revokeSession(store.session(request.cookies.arthegall ?? '')!);
+    store.revokeSession(store.session(browserToken(request))!);
     reply.clearCookie('arthegall', { path: '/' });
     tick();
     return { revoked: true };
   });
-  app.get('/events', { websocket: true }, (socket, request) => {
-    const token = request.cookies.arthegall ?? '';
+  function subscribe(socket: WebSocket, request: FastifyRequest, token: string) {
     const sessionId = store.session(token);
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
     if (!sessionId || !query.success) { socket.close(1008); return; }
@@ -212,7 +242,9 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     track(socket);
     socket.on('close', () => browsers.delete(socket));
     tick();
-  });
+  }
+  app.get('/events', { websocket: true }, (socket, request) => subscribe(socket, request, browserToken(request)));
+  app.get('/client/v1/events', { websocket: true }, (socket, request) => subscribe(socket, request, appToken(request)));
   app.get('/runner', { websocket: true }, (socket, request) => {
     if (request.headers.origin) { socket.close(1008); return; }
     const auth = request.headers.authorization;
