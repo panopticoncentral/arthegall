@@ -1,6 +1,7 @@
 ARTHEGALL_APP_ID = org.arthegall.mac
 PRODUCT_BUNDLE_IDENTIFIER = $(ARTHEGALL_APP_ID)
 PRODUCT_NAME = Arthegall
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
 GENERATE_INFOPLIST_FILE = YES
@@ -8,3 +9,6 @@ INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.productivity
 INFOPLIST_KEY_NSLocalNetworkUsageDescription = Connect to your paired Arthegall server on the local network.
 CODE_SIGN_IDENTITY = -
 ALWAYS_SEARCH_USER_PATHS = NO
+
+// Optional signing settings for this developer's Mac.
+#include? "Mac.local.xcconfig"

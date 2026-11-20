@@ -23,7 +23,7 @@
         A00000000000000000000005 = {
             isa = PBXNativeTarget;
             buildConfigurationList = A00000000000000000000008;
-            buildPhases = (A00000000000000000000009);
+            buildPhases = (A00000000000000000000009,A00000000000000000000015);
             buildRules = ();
             dependencies = ();
             fileSystemSynchronizedGroups = (A00000000000000000000006);
@@ -41,6 +41,7 @@
         A00000000000000000000012 = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = A00000000000000000000014; buildSettings = {}; };
         A00000000000000000000013 = { isa = XCBuildConfiguration; name = Release; baseConfigurationReference = A00000000000000000000014; buildSettings = {}; };
         A00000000000000000000014 = { isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Mac.xcconfig; sourceTree = SOURCE_ROOT; };
+        A00000000000000000000015 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         B00000000000000000000001 = {
             isa = PBXNativeTarget;
             buildConfigurationList = B00000000000000000000004;
