@@ -26,6 +26,8 @@ Use the `/client/v1` prefix and the `X-Arthegall-Client: 1` header for HTTP and 
 
 ## Verification
 
+At commit `1e0fae8`, the owner verified pairing and an Administrator DM from the Mac app on a separate laptop over private HTTPS. The Swift session drill also recovered a reply across process launches and recorded one dispatch after retrying a send whose acknowledgment was lost. The [checkpoint CI run](https://github.com/panopticoncentral/arthegall/actions/runs/44681752659) passed.
+
 `npm test` exercises pairing expiry, credential separation, event subscription, revocation and send deduplication. To exercise the Mac app with Xcode UI testing, build the services and run the fixture from a logged-in Mac desktop.
 
 ```sh
