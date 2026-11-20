@@ -63,3 +63,7 @@ The default listener binds only to loopback. For another device, put a trusted H
 ## Public repository data
 
 Use generic descriptions and synthetic fixtures in source, docs, and tests. Keep credentials, local databases, personal paths, machine names, provider transcripts, and actual usage samples outside committed artifacts. Normal Git author metadata is welcome.
+
+Before every push, review all outgoing commits locally against the destination. Inspect commit messages, filenames, and each commit’s changes, including content removed by later commits. For binary assets, check both their contents and embedded metadata. Look for personal information such as contact details and signing identities as well as the private data listed above.
+
+If anything needs review, stop before pushing. Identify the commit, file, and type of information without quoting the private value. Resume only after the finding is removed from the outgoing history or explicitly cleared for publication, and review the final outgoing commits again.
