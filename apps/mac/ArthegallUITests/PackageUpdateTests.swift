@@ -39,8 +39,11 @@ final class PackageUpdateTests: XCTestCase {
         let reply = app.links["reply-to-" + fixture.message]
         XCTAssertTrue(reply.waitForExistence(timeout: 10))
         reply.click()
+        let clearReply = app.links["Clear reply target"]
+        XCTAssertTrue(clearReply.waitForExistence(timeout: 10))
         let composer = app.descendants(matching: .any)["message-composer"].firstMatch
         let draft = "Synthetic draft to retain through an app update."
+        composer.click()
         composer.typeText(draft)
         XCTAssertEqual(composer.value as? String, draft)
         app.terminate()
@@ -55,7 +58,7 @@ final class PackageUpdateTests: XCTestCase {
         app.launch()
         XCTAssertTrue(savedReport.waitForExistence(timeout: 15), "The updated app should reopen the same paired DM.")
         XCTAssertEqual(composer.value as? String, draft)
-        XCTAssertTrue(app.links["Clear reply target"].exists)
+        XCTAssertTrue(clearReply.exists)
         app.descendants(matching: .any)["connection-menu"].firstMatch.click()
         app.menuItems["Unpair This Mac…"].click()
         app.buttons["Unpair"].click()
