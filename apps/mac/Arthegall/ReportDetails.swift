@@ -16,6 +16,7 @@ struct ReportDetails: View {
             .padding(.vertical, 6)
             .textSelection(.enabled)
         }
+        .accessibilityIdentifier("recorded-usage-" + id)
         DisclosureGroup("Original message text") {
             Text(verbatim: source).font(.system(.body, design: .monospaced))
                 .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)

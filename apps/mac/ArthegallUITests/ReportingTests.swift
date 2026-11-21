@@ -5,7 +5,13 @@ final class ReportingTests: XCTestCase {
         let origin: String
         let code: String
         let bundle: String
+        let adminDM: String
         let fixtureURL: URL
+    }
+
+    private struct FixtureResponse: Decodable {
+        let id: String?
+        let error: String?
     }
 
     @MainActor
@@ -27,16 +33,17 @@ final class ReportingTests: XCTestCase {
         app.buttons["Pair Mac"].click()
 
         send("Create Rowan and run a usage report.", in: app)
-        openDM("Rowan", in: app)
+        let reporterDM = try await fixtureID(["lookupRowan": true], fixture: fixture)
+        openDM(reporterDM, name: "Rowan", in: app)
         reviewReportingAccess(in: app)
         let allowRun = app.buttons["Allow next run only"]
         XCTAssertTrue(allowRun.waitForExistence(timeout: 10))
         allowRun.click()
         app.buttons["Back to conversation"].click()
         XCTAssertTrue(app.staticTexts["Synthetic total: 33"].firstMatch.waitForExistence(timeout: 20))
-        openDM("Administrator", in: app)
+        openDM(fixture.adminDM, name: "Administrator", in: app)
         send("Schedule Rowan's daily report at 8:00 AM Pacific.", in: app)
-        openDM("Rowan", in: app)
+        openDM(reporterDM, name: "Rowan", in: app)
         reviewReportingAccess(in: app)
         let allowRecurring = app.buttons["Allow recurring reports"]
         XCTAssertTrue(allowRecurring.waitForExistence(timeout: 10))
@@ -44,11 +51,11 @@ final class ReportingTests: XCTestCase {
         XCTAssertTrue(app.buttons["Change schedule"].waitForExistence(timeout: 10))
         app.terminate()
 
-        let first = try await deliver(15, fixture: fixture)
+        let first = try await fixtureID(["day": 15], fixture: fixture)
         app.launch()
         let firstTotal = app.staticTexts["Synthetic total: 34"].firstMatch
         XCTAssertTrue(firstTotal.waitForExistence(timeout: 15))
-        let evidence = app.descendants(matching: .any).matching(identifier: "Recorded usage · 2020-06-14").firstMatch
+        let evidence = app.descendants(matching: .any)["recorded-usage-" + first].firstMatch
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
         evidence.click()
         let noRecords = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "No local records")).firstMatch
@@ -72,7 +79,7 @@ final class ReportingTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Saved your preference for the report with 34 tokens."].firstMatch.waitForExistence(timeout: 20))
         app.terminate()
 
-        _ = try await deliver(16, fixture: fixture)
+        _ = try await fixtureID(["day": 16], fixture: fixture)
         app.launch()
         XCTAssertTrue(app.staticTexts["Source coverage: local records. Synthetic total: 35"].firstMatch.waitForExistence(timeout: 15))
         app.descendants(matching: .any)["connection-menu"].firstMatch.click()
@@ -89,10 +96,9 @@ final class ReportingTests: XCTestCase {
         app.buttons["Send"].click()
     }
 
-    @MainActor private func openDM(_ name: String, in app: XCUIApplication) {
-        let row = app.descendants(matching: .any).matching(NSPredicate(format:
-            "identifier BEGINSWITH %@ AND label CONTAINS %@", "conversation-", name)).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 15))
+    @MainActor private func openDM(_ id: String, name: String, in app: XCUIApplication) {
+        let row = app.descendants(matching: .any)["conversation-" + id].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "The server has the \(name) DM, but the sidebar did not show its conversation row.")
         row.click()
     }
 
@@ -102,15 +108,20 @@ final class ReportingTests: XCTestCase {
         review.click()
     }
 
-    private func deliver(_ day: Int, fixture: Fixture) async throws -> String {
-        struct Delivery: Decodable { let messageId: String }
+    private func fixtureID<Body: Encodable>(_ body: Body, fixture: Fixture) async throws -> String {
         var request = URLRequest(url: fixture.fixtureURL)
         request.httpMethod = "POST"
         request.setValue(fixture.origin, forHTTPHeaderField: "Origin")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["day": day])
+        request.httpBody = try JSONEncoder().encode(body)
         let (data, response) = try await URLSession.shared.data(for: request)
-        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
-        return try JSONDecoder().decode(Delivery.self, from: data).messageId
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let result = try JSONDecoder().decode(FixtureResponse.self, from: data)
+        guard status == 200, let id = result.id else {
+            throw NSError(domain: "ReportingFixture", code: status, userInfo: [
+                NSLocalizedDescriptionKey: result.error ?? "The reporting fixture did not return an ID."
+            ])
+        }
+        return id
     }
 }

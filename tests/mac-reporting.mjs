@@ -45,8 +45,17 @@ server.addHook('onSend', async (request, reply, payload) => {
   }
   return payload;
 });
-server.post(fixtureRoute, async request => {
-  if (request.body.day === 15 || request.body.day === 16) return { messageId: (await advance(request.body.day)).message_id };
+server.post(fixtureRoute, async (request, reply) => {
+  if (request.body.day === 15 || request.body.day === 16) return { id: (await advance(request.body.day)).message_id };
+  if (request.body.lookupRowan === true) {
+    for (let i = 0; i < 150; ++i) {
+      const id = store.reporting.find('Rowan');
+      if (id) return { id };
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const sent = store.snapshot().messages.some(message => message.conversationId === ids.conversationId && message.author === 'user');
+    return reply.code(409).send({ error: sent ? 'The Administrator received a message, but Rowan was not created.' : 'No Administrator message reached the fixture server.' });
+  }
   if (request.body.decline) await browserDecline(request.body.decline);
   else throw new Error('Unknown fixture action');
   return { ok: true };
@@ -57,7 +66,8 @@ const runner = await startRunner(local, { runnerId: ids.runnerId, token: 'synthe
   rpcFactory: workspace => new CodexRpc(process.execPath, [resolve('dist/tests/fixtures/provider.js'), root], workspace) });
 const bundle = 'org.arthegall.fixture.t' + randomUUID();
 const manifest = join(root, 'fixture.json');
-writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode(), bundle, fixtureURL: origin + fixtureRoute }), { mode: 0o600 });
+writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode(), bundle, adminDM: ids.conversationId,
+  fixtureURL: origin + fixtureRoute }), { mode: 0o600 });
 try {
   if (uiEnvironment) {
     await run('xcodebuild', ['-project', 'apps/mac/Arthegall.xcodeproj', '-scheme', 'Arthegall',
