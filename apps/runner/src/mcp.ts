@@ -48,12 +48,12 @@ export async function startToolService() {
     if (binding.context.administrator && binding.admin) {
       const annotations = { destructiveHint: false, openWorldHint: false, idempotentHint: true };
       mcp.registerTool('create_reporting_assignment', { inputSchema: CreateAssignment, annotations,
-        description: 'Create a named Codex agent, its DM and an on-demand usage assignment. Separate agent instructions from the assignment responsibility. Request browser approval for access.' },
+        description: 'Create a named Codex agent, its DM and an on-demand usage assignment. Separate agent instructions from the assignment responsibility. Request user approval for access.' },
       async (args) => { valid(); return content(await binding.admin!({ tool: 'create_reporting_assignment', args })); });
       mcp.registerTool('revise_reporting_agent', { inputSchema: Definition, annotations, description: 'Revise the named reporting agent instructions. Authority stays scoped to its approved assignment.' },
       async (args) => { valid(); return content(await binding.admin!({ tool: 'revise_reporting_agent', args })); });
       mcp.registerTool('schedule_usage_report', { inputSchema: ScheduleRequest, annotations,
-        description: 'Propose a daily schedule for an existing reporting assignment. Use HH:mm Pacific time and enable backfill only on explicit request. The browser must approve recurring access.' },
+        description: 'Propose a daily schedule for an existing reporting assignment. Use HH:mm Pacific time and enable backfill only on explicit request. The user must approve recurring access.' },
       async (args) => { valid(); return content(await binding.admin!({ tool: 'schedule_usage_report', args })); });
       mcp.registerTool('run_usage_report', { inputSchema: ReportRequest, annotations,
         description: 'Queue a report in the named reporting agent DM. Range is inclusive, Pacific time. Omit for yesterday.' },

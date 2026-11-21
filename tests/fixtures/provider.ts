@@ -8,7 +8,7 @@ const root = process.argv[2]!;
 const mode = () => existsSync(join(root, 'mode')) ? readFileSync(join(root, 'mode'), 'utf8') : 'complete';
 const send = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let config: { mcp_servers: { arthegall: { url: string; http_headers: Record<string, string> } } };
-const threadId = ['reporting', 'scheduled'].includes(mode()) ? 'synthetic-' + process.cwd().split(/[\\/]/).at(-1) : 'synthetic-thread';
+const threadId = ['reporting', 'scheduled', 'mac-reporting'].includes(mode()) ? 'synthetic-' + process.cwd().split(/[\\/]/).at(-1) : 'synthetic-thread';
 const lines = createInterface({ input: process.stdin });
 process.stdin.on('end', () => process.exit(0));
 process.stdout.on('error', () => process.exit(0));
@@ -46,13 +46,20 @@ lines.on('line', (line) => { void (async () => {
       const context = await call('read_context', {});
       let message = 'Synthetic durable result';
       let assignmentPreference: string | undefined;
-      if (mode() === 'scheduled') {
-        if (context.administrator) await call('schedule_usage_report', { name: 'Rowan', time: '08:00' });
-        else if (context.range) {
+      if (['scheduled', 'mac-reporting'].includes(mode())) {
+        if (context.administrator) {
+          if (mode() === 'mac-reporting' && context.messages.at(-1)?.text.startsWith('Create')) {
+            await call('create_reporting_assignment', { name: 'Rowan', instructions: 'Report usage' });
+            await call('run_usage_report', { name: 'Rowan', range: { start: '2020-06-13', end: '2020-06-13' } });
+          } else await call('schedule_usage_report', { name: 'Rowan', time: '08:00' });
+        } else if (context.range) {
           appendFileSync(join(root,'scheduled-executions'),context.runId + '\n');
           const report = await call('read_usage', context.range);
           message = (context.preference ? 'Source coverage: local records. ' : '') + 'Synthetic total: ' + report.codex.total;
-        } else { assignmentPreference = 'Put source coverage first.'; message = 'Saved your preference.'; }
+        } else {
+          assignmentPreference = 'Put source coverage first.';
+          message = mode() === 'mac-reporting' ? `Saved your preference for the report with ${context.priorReport.codex.total} tokens.` : 'Saved your preference.';
+        }
       }
       if (mode() === 'reporting') {
         if (context.administrator) {

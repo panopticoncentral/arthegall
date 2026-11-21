@@ -114,6 +114,19 @@ test('installed client v1 uses an independent expiring pairing for HTTP and live
     assert.deepEqual((await send()).json(), accepted.json());
     await until(() => events.some(e => e.kind === 'message_accepted'));
     assert.equal(store.db.prepare('SELECT count(*) FROM dispatches').pluck().get(), 1);
+    assert.equal(snapshot.json().commandApprovalsVersion, 1);
+    const dispatch = store.nextDispatch(ids.runnerId)!;
+    const approvalId = randomUUID();
+    store.receive(ids.runnerId, { type: 'delivery', version: 1, deliveryId: randomUUID(), runId: dispatch.context.runId,
+      sequence: 1, event: { kind: 'approval', approval: { approvalId, command: 'Synthetic operation' } } });
+    const decide = (prefix: string, decision: string, credential: Record<string, string>) =>
+      server.inject({ method: 'POST', url: `${prefix}/approvals/${approvalId}`, headers: credential, payload: { decision } });
+    const browserHeaders = { ...host, ...version, origin, cookie: 'arthegall=' + old.token };
+    assert.equal((await decide('/client/v1', 'accept', browserHeaders)).statusCode, 401);
+    assert.equal((await decide('/client/v1', 'accept', headers)).statusCode, 200);
+    assert.equal((await decide('/api', 'decline', browserHeaders)).statusCode, 409);
+    assert.deepEqual(store.db.prepare('SELECT decision,session_id FROM approvals WHERE id=?').get(approvalId),
+      { decision: 'accept', session_id: app.sessionId });
     assert.equal((await server.inject({ method: 'POST', url: '/client/v1/revoke', headers })).statusCode, 200);
     await until(() => socket?.readyState === WebSocket.CLOSED);
     assert.equal((await send()).statusCode, 401);

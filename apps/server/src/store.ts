@@ -170,7 +170,7 @@ export class ServerStore {
         this.reporting.propose(agent.assignmentId, runnerId, runId);
       }
       const result = { name: agent.name, conversationId: conversation, assignmentId: agent.assignmentId, ...(reportRunId ? { reportRunId } : {}),
-        access: (scheduledApproval ?? Boolean(this.reporting.grant(agent.assignmentId, runnerId, null))) ? 'approved' : 'requires browser approval' };
+        access: (scheduledApproval ?? Boolean(this.reporting.grant(agent.assignmentId, runnerId, null))) ? 'approved' : 'requires user approval' };
       this.db.prepare('INSERT INTO admin_receipts VALUES (?,?,?)').run(runId, key, JSON.stringify(result));
       this.event('administrator_operation', { runId, tool: op.tool, ...result });
       return result;

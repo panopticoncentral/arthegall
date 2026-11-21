@@ -27,7 +27,33 @@ struct Message: Decodable, Identifiable {
     let requestedReport: Int?
     let evidence: ReportEvidence?
 
-    struct ReportEvidence: Decodable {}
+    struct ReportEvidence: Decodable {
+        let range: DateRange
+        let timeZone: String
+        let codex: SourceUsage
+        let claude: SourceUsage
+        let combinedTokens: Int?
+        let combinedActualSpendUsd: Double?
+
+        struct DateRange: Decodable {
+            let start: String
+            let end: String
+
+            var label: String { start == end ? start : "\(start) – \(end)" }
+        }
+
+        struct SourceUsage: Decodable {
+            let coverage: String
+            let responses: Int
+            let input: Int?
+            let cachedInput: Int?
+            let output: Int?
+            let reasoningOutput: Int?
+            let total: Int?
+            let actualSpendUsd: Double?
+            let notes: [String]
+        }
+    }
 }
 
 struct Snapshot: Decodable {
@@ -38,6 +64,7 @@ struct Snapshot: Decodable {
     let runs: [RunSummary]?
 
     let settingsVersion: Int?
+    let commandApprovalsVersion: Int?
     let pairings: [SessionSummary]
     let runners: [Runner]
     let retentionDays: Int
@@ -45,6 +72,14 @@ struct Snapshot: Decodable {
     let recovery: Recovery?
     let schedules: [ReportSchedule]
     let grants: [AccessRequest]
+    let approvals: [CommandApproval]?
+
+    struct CommandApproval: Decodable, Identifiable {
+        let id: String
+        let runId: String
+        let conversationId: String
+        let command: String
+    }
 
     struct SessionSummary: Decodable {
         let current: Int
@@ -54,6 +89,7 @@ struct Snapshot: Decodable {
     struct Recovery: Decodable { let ready: Bool }
 
     struct RunSummary: Decodable {
+        let id: String
         let messageId: String
         let state: String
     }
@@ -79,7 +115,7 @@ struct SendCommand: Codable {
     let commandId: UUID
     let conversationId: String
     let text: String
-    var replyTo: String?
+    var replyTo: String? = nil
 }
 
 struct ClientError: LocalizedError {

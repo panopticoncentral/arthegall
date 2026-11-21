@@ -6,6 +6,7 @@ struct ConversationView: View {
 
     let sourceMessage: String?
     let openAssignment: () -> Void
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         let messages = model.snapshot?.messages.filter { $0.conversationId == dm.id } ?? []
@@ -21,8 +22,11 @@ struct ConversationView: View {
                     .padding(32)
                 }
             } else {
-                Transcript(dm: dm, messages: messages, runs: model.snapshot?.runs ?? [],
-                           sourceMessage: sourceMessage, openAssignment: openAssignment)
+                Transcript(model: model, dm: dm, messages: messages, sourceMessage: sourceMessage,
+                           openAssignment: openAssignment, reply: { message in
+                               model.reply(to: message, in: dm.id)
+                               composerFocused = true
+                           })
             }
             if let snapshot = model.snapshot, snapshot.settingsVersion == 1,
                snapshot.schedules.contains(where: { $0.conversationId == dm.id && $0.state == "pending" }) ||
@@ -30,7 +34,10 @@ struct ConversationView: View {
                 Button("Review reporting access", systemImage: "hand.raised", action: openAssignment)
                     .padding(.vertical, 6)
             }
-            Composer(model: model, dm: dm)
+            if let error = model.settingsError {
+                Text(verbatim: error).foregroundStyle(.red).font(.caption).padding(.horizontal, 22)
+            }
+            Composer(model: model, dm: dm, focused: $composerFocused)
                 .frame(maxWidth: WorkspaceStyle.readingWidth)
                 .padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 18)
         }
@@ -45,23 +52,40 @@ struct ConversationView: View {
 }
 
 private struct Transcript: View {
+    @ObservedObject var model: ConversationModel
     let dm: Conversation
     let messages: [Message]
-    let runs: [Snapshot.RunSummary]
     let sourceMessage: String?
     let openAssignment: () -> Void
+    let reply: (Message) -> Void
     @State private var followsLatest = true
     @State private var lastHeight: CGFloat = 0
 
     var body: some View {
-        let states = Dictionary(runs.map { ($0.messageId, $0.state) }, uniquingKeysWith: { _, latest in latest })
+        let snapshot = model.snapshot
+        let runs = Dictionary((snapshot?.runs ?? []).map { ($0.messageId, $0) }, uniquingKeysWith: { _, latest in latest })
+        let approvals = Dictionary(grouping: (snapshot?.approvals ?? []).filter { $0.conversationId == dm.id }, by: \.runId)
+        let supportsApprovals = snapshot?.commandApprovalsVersion == 1
         GeometryReader { viewport in
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
                         ForEach(messages) { message in
-                            MessageRow(dm: dm, message: message, runState: states[message.id], openAssignment: openAssignment)
+                            let run = runs[message.id]
+                            let pending = run.flatMap { approvals[$0.id] } ?? []
+                            let state = supportsApprovals && run?.state == "approval" && pending.isEmpty ? "decision_sent" : run?.state
+                            MessageRow(dm: dm, message: message, runState: state,
+                                       supportsApprovals: supportsApprovals, openAssignment: openAssignment,
+                                       reply: dm.closed == 0 && model.local.pending == nil ? { reply(message) } : nil)
                                 .id(message.id)
+                            if supportsApprovals {
+                                ForEach(pending) { approval in
+                                    CommandApprovalCard(approval: approval, agent: dm.name,
+                                                        disabled: !model.online || model.savingSettings || snapshot?.recovery != nil) { allow in
+                                        Task { await model.decideCommand(approval, allow: allow) }
+                                    }
+                                }
+                            }
                         }
                     }
                     .frame(maxWidth: WorkspaceStyle.readingWidth)
@@ -118,7 +142,9 @@ private struct MessageRow: View {
     let dm: Conversation
     let message: Message
     let runState: String?
+    let supportsApprovals: Bool
     let openAssignment: () -> Void
+    let reply: (() -> Void)?
 
     private var user: Bool { message.author == "user" }
     private var name: String {
@@ -139,11 +165,18 @@ private struct MessageRow: View {
                         MessageMarkdown(source: message.text).equatable()
                     }
                 }
-                if message.evidence != nil {
-                    Button("Assignment settings", action: openAssignment).buttonStyle(.link)
+                if let evidence = message.evidence {
+                    ReportDetails(id: message.id, source: message.text, evidence: evidence)
+                    HStack {
+                        if let reply {
+                            Button("Reply to report", action: reply).buttonStyle(.link)
+                                .accessibilityIdentifier("reply-to-" + message.id)
+                        }
+                        Button("Assignment settings", action: openAssignment).buttonStyle(.link)
+                    }
                 }
                 if !user {
-                    MessageStatus(state: runState ?? message.state)
+                    MessageStatus(state: runState ?? message.state, supportsApprovals: supportsApprovals)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -161,6 +194,7 @@ private struct MessageRow: View {
 
 private struct MessageStatus: View {
     let state: String
+    let supportsApprovals: Bool
 
     private var status: (String, String, Color)? {
         switch state {
@@ -168,7 +202,8 @@ private struct MessageStatus: View {
         case "queued": ("Queued for runner", "clock", .secondary)
         case "accepted", "running", "streaming": ("Responding…", "waveform", WorkspaceStyle.pine)
         case "awaiting_access": ("Awaiting reporting access", "hand.raised", .orange)
-        case "approval": ("Awaiting approval in browser", "hand.raised", .orange)
+        case "approval": (supportsApprovals ? "Awaiting command approval" : "Awaiting approval in browser", "hand.raised", .orange)
+        case "decision_sent": ("Command decision sent", "checkmark.circle", .secondary)
         case "waiting_for_user": ("Waiting for your reply", "bubble.left", WorkspaceStyle.pine)
         case "blocked": ("Blocked", "exclamationmark.circle", .red)
         default: (state.replacingOccurrences(of: "_", with: " ").capitalized, "circle", .secondary)
@@ -185,13 +220,36 @@ private struct MessageStatus: View {
     }
 }
 
+private struct CommandApprovalCard: View {
+    let approval: Snapshot.CommandApproval
+    let agent: String
+    let disabled: Bool
+    let decide: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Command approval needed", systemImage: "hand.raised").font(.headline)
+            Text("Allow \(agent) to run this operation once?")
+            Text(verbatim: approval.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+            HStack {
+                Button("Approve once") { decide(true) }
+                Button("Decline command") { decide(false) }
+            }.buttonStyle(.bordered).disabled(disabled)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WorkspaceStyle.inset, in: RoundedRectangle(cornerRadius: 11))
+    }
+}
+
 private struct Composer: View {
     @ObservedObject var model: ConversationModel
     let dm: Conversation
-    @FocusState private var focused: Bool
+    let focused: FocusState<Bool>.Binding
 
     var body: some View {
         let pending = model.local.pending != nil
+        let replyTo = pending ? model.local.pending?.replyTo : model.local.replyTargets?[dm.id]
         let draft = model.local.pending?.text ?? model.local.drafts[dm.id] ?? ""
         let tooLong = draft.utf16.count > 16_000
         let label = pending ? "Retry Send" : "Send"
@@ -200,12 +258,22 @@ private struct Composer: View {
                 Label(model.connectionStatus, systemImage: "wifi.slash")
             } else if model.snapshot?.runnerConnected == false {
                 Label("Runner disconnected · Messages will queue", systemImage: "clock")
+            } else if model.snapshot?.runners.contains(where: { $0.status == "sign_in_needed" }) == true {
+                Label("Codex sign-in needed on the runner", systemImage: "person.crop.circle.badge.exclamationmark")
             }
             VStack(alignment: .leading, spacing: 8) {
+                if let replyTo {
+                    let range = model.snapshot?.messages.first { $0.id == replyTo }?.evidence?.range.label
+                    HStack {
+                        Label(range.map { "Replying to report · \($0)" } ?? "Replying to selected report", systemImage: "arrowshape.turn.up.left")
+                        Spacer()
+                        Button("Clear reply target") { model.clearReply(in: dm.id) }.buttonStyle(.link).disabled(pending)
+                    }
+                }
                 TextField(dm.closed != 0 ? "Conversation closed" : "Message \(dm.name)…",
                           text: Binding(get: { draft }, set: { model.edit($0, in: dm.id) }), axis: .vertical)
                     .textFieldStyle(.plain).lineLimit(1...6)
-                    .font(.system(size: 14)).foregroundStyle(.primary).focused($focused)
+                    .font(.system(size: 14)).foregroundStyle(.primary).focused(focused)
                     .accessibilityIdentifier("message-composer")
                     .disabled(dm.closed != 0 || pending)
                 HStack(alignment: .center, spacing: 8) {
@@ -231,7 +299,7 @@ private struct Composer: View {
             .padding(12)
             .background(WorkspaceStyle.surface, in: RoundedRectangle(cornerRadius: 13))
             .overlay {
-                RoundedRectangle(cornerRadius: 13).strokeBorder(focused ? WorkspaceStyle.pine : WorkspaceStyle.hairline)
+                RoundedRectangle(cornerRadius: 13).strokeBorder(focused.wrappedValue ? WorkspaceStyle.pine : WorkspaceStyle.hairline)
                     .allowsHitTesting(false)
             }
             .shadow(color: .black.opacity(0.035), radius: 4, y: 2)

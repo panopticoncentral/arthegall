@@ -33,9 +33,17 @@ struct MacSessionProbe {
         case "finish":
             try require(model.snapshot?.messages.contains(where: { $0.text.hasPrefix("Synthetic approval declined.") }) == true)
             try require(model.snapshot?.messages.filter { $0.author == "user" }.count == 1)
+            guard let conversation = model.selected else { throw ClientError(message: "Missing test conversation") }
+            model.edit("/test approval", in: conversation)
+            await model.send()
+            try await wait { model.snapshot?.approvals?.isEmpty == false }
+            guard let approval = model.snapshot?.approvals?.first else { throw ClientError(message: "Missing command approval") }
+            try require(approval.command == "Synthetic test: read setup-note.txt" && approval.conversationId == conversation)
+            await model.decideCommand(approval, allow: true)
+            try await wait { model.snapshot?.messages.contains(where: { $0.text.hasPrefix("Synthetic approval accepted.") }) == true }
             await model.unpair()
             try require(model.pairing == nil)
-            print("New process found offline completion and revoked pairing.")
+            print("New process found offline completion, made a native one-time approval, and revoked pairing.")
         default: throw ClientError(message: "Unknown test phase")
         }
     }

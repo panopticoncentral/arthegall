@@ -70,6 +70,12 @@ final class ConversationTests: XCTestCase {
         // Selectable SwiftUI text may expose both a container and its text leaf.
         let prompts = app.staticTexts.matching(identifier: "/test approval").allElementsBoundByIndex
         XCTAssertEqual(prompts.filter { $0.staticTexts.count == 0 }.count, 1)
+        composer.click()
+        composer.typeText("/test approval")
+        app.buttons["Send"].click()
+        XCTAssertTrue(app.staticTexts["Synthetic test: read setup-note.txt"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Approve once"].click()
+        XCTAssertTrue(app.staticTexts["Synthetic approval accepted. No file operation was performed by this test provider."].firstMatch.waitForExistence(timeout: 10))
         app.descendants(matching: .any)["connection-menu"].firstMatch.click()
         app.menuItems["Unpair This Mac…"].click()
         app.buttons["Unpair"].click()

@@ -95,6 +95,7 @@ try {
     await run('xcodebuild', ['-project', 'apps/mac/Arthegall.xcodeproj', '-scheme', 'Arthegall',
       '-destination', 'platform=macOS,arch=' + (process.arch === 'arm64' ? 'arm64' : 'x86_64'),
       '-derivedDataPath', resolve('dist/mac-ui'), '-parallel-testing-enabled', 'NO',
+      '-only-testing:ArthegallUITests/ConversationTests',
       'ARTHEGALL_APP_ID=' + bundle, 'test'], { ...process.env, TEST_RUNNER_ARTHEGALL_MAC_FIXTURE: manifest });
   }
   if (reportDM) {
@@ -105,11 +106,12 @@ try {
     assert.equal(store.reporting.settings(reportDM).instructions, 'Lead with coverage.');
     assert.equal(store.db.prepare("SELECT COUNT(*) FROM report_schedules WHERE state='active'").pluck().get(), 1);
   }
-  assert.equal(sends, 2);
-  assert.equal(store.db.prepare('SELECT COUNT(*) FROM dispatches').pluck().get(), 1);
-  assert.equal(store.db.prepare("SELECT COUNT(*) FROM messages WHERE author='user' AND conversation_id=?").pluck().get(ids.conversationId), 1);
-  assert.equal(store.db.prepare('SELECT COUNT(*) FROM command_receipts').pluck().get(), 1);
-  console.log('Verified two submissions, one message, one receipt and one dispatch.');
+  assert.equal(sends, 3);
+  assert.equal(store.db.prepare('SELECT COUNT(*) FROM dispatches').pluck().get(), 2);
+  assert.equal(store.db.prepare("SELECT COUNT(*) FROM messages WHERE author='user' AND conversation_id=?").pluck().get(ids.conversationId), 2);
+  assert.equal(store.db.prepare('SELECT COUNT(*) FROM command_receipts').pluck().get(), 2);
+  assert.equal(store.db.prepare("SELECT COUNT(*) FROM approvals WHERE decision='accept' AND session_id!=?").pluck().get(control.id), 1);
+  console.log('Verified one dispatch for the retried message and a separate one-time approval from the Mac client.');
 } finally {
   clearInterval(timer);
   await runner.close(); await server.close(); local.close(); store.close();

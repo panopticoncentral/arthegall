@@ -115,20 +115,32 @@ final class ConversationModel: ObservableObject {
         savingSettings = true
         settingsError = nil
         defer { savingSettings = false }
+        var saved = false
         do {
             try await client.saveSetting(pairing, path: path, body: body)
+            saved = true
         } catch {
-            if self.pairing == pairing { settingsError = error.localizedDescription }
-            return false
+            guard self.pairing == pairing else { return false }
+            settingsError = error.localizedDescription
+            // Another paired client may have resolved the request before this decision arrived.
+            guard (error as? ClientError)?.status == 409 else { return false }
         }
         do {
             let latest = try await client.snapshot(pairing)
             guard self.pairing == pairing else { return false }
             if latest.cursor >= (snapshot?.cursor ?? 0) { snapshot = latest }
         } catch {
-            if self.pairing == pairing { settingsError = "Change saved. Could not refresh settings: " + error.localizedDescription }
+            if self.pairing == pairing && saved {
+                settingsError = "Change saved. Could not refresh settings: " + error.localizedDescription
+            }
         }
-        return self.pairing == pairing
+        return saved && self.pairing == pairing
+    }
+
+    func decideCommand(_ approval: Snapshot.CommandApproval, allow: Bool) async {
+        guard snapshot?.commandApprovalsVersion == 1, snapshot?.recovery == nil,
+              snapshot?.approvals?.contains(where: { $0.id == approval.id }) == true else { return }
+        await saveSetting("approvals/" + approval.id, ["decision": allow ? "accept" : "decline"])
     }
 
     @discardableResult
@@ -150,10 +162,25 @@ final class ConversationModel: ObservableObject {
         update { $0.drafts[id] = text }
     }
 
+    func reply(to message: Message, in id: String) {
+        guard local.pending == nil, message.conversationId == id, message.evidence != nil else { return }
+        update {
+            var targets = $0.replyTargets ?? [:]
+            targets[id] = message.id
+            $0.replyTargets = targets
+        }
+    }
+
+    func clearReply(in id: String) {
+        guard local.pending == nil else { return }
+        update { $0.replyTargets?.removeValue(forKey: id) }
+    }
+
     func send() async {
         guard let pairing, let id = selected, online, !busy else { return }
         let text = (local.drafts[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let command = local.pending ?? SendCommand(commandId: UUID(), conversationId: id, text: text)
+        let command = local.pending ?? SendCommand(commandId: UUID(), conversationId: id, text: text,
+                                                    replyTo: local.replyTargets?[id])
         guard !command.text.isEmpty, command.text.utf16.count <= 16_000,
               update({ $0.pending = command }) else { return }
         busy = true
@@ -161,7 +188,11 @@ final class ConversationModel: ObservableObject {
         do {
             try await client.send(command, pairing)
             guard self.pairing == pairing else { return }
-            if update({ $0.pending = nil; $0.drafts.removeValue(forKey: id) }) { problem = nil }
+            if update({
+                $0.pending = nil
+                $0.drafts.removeValue(forKey: id)
+                $0.replyTargets?.removeValue(forKey: id)
+            }) { problem = nil }
         } catch {
             guard self.pairing == pairing else { return }
             problem = error.localizedDescription

@@ -33,7 +33,7 @@ for (const backfill of [false, true]) test(`offline runner catches up after rest
     const admin = next()!;
     const proposal = { tool: 'schedule_usage_report', args: { name: 'Rowan', time: '08:00', ...(backfill ? { backfill } : {}) } };
     const result = server.adminOperation(old.ids.runner, admin.context.runId, proposal);
-    assert('access' in result && result.access === 'requires browser approval');
+    assert('access' in result && result.access === 'requires user approval');
     assert.deepEqual(server.adminOperation(old.ids.runner, admin.context.runId, proposal), result);
     server.receive(old.ids.runner, { type: 'delivery', version: 1, runId: admin.context.runId, deliveryId: randomUUID(), sequence: 1, event: { kind: 'outcome', outcome: { status: 'completed', message: 'Proposed' } } });
     const schedule = String(server.db.prepare('SELECT id FROM report_schedules').pluck().get());

@@ -120,7 +120,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       .all(sessionId, Date.now()),
     runnerConnected: [...runners.values()].some((runner) => runner.ready) });
   app.get('/api/snapshot', async request => snapshot(store.session(browserToken(request))!));
-  app.get('/client/v1/snapshot', async request => ({ ...snapshot(store.session(appToken(request))!), settingsVersion: 1 }));
+  app.get('/client/v1/snapshot', async request => ({ ...snapshot(store.session(appToken(request))!), settingsVersion: 1, commandApprovalsVersion: 1 }));
   app.post('/client/v1/messages', async request => store.send(store.session(appToken(request))!, request.body));
   app.post('/client/v1/revoke', async request => {
     store.revokeSession(store.session(appToken(request))!);
@@ -216,10 +216,10 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     for (const runner of runners.values()) runner.nextCleanup = 0;
     return { saved: true };
   });
-  app.post('/api/approvals/:id', { preHandler: checkApprovalChanges }, async (request) => {
+  settingsPost('/approvals/:id', async request => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { decision } = z.strictObject({ decision: z.enum(['accept', 'decline']) }).parse(request.body);
-    store.decide(store.session(browserToken(request))!, id, decision);
+    store.decide(settingsSession(request), id, decision);
     return { saved: true };
   });
   settingsPost('/conversations/:id/close', async (request) => {

@@ -45,6 +45,7 @@ enum Credentials {
 struct LocalState: Codable {
     var selection: String?
     var drafts: [String: String] = [:]
+    var replyTargets: [String: String]?
     var pending: SendCommand?
 
     private static func location(_ pairing: Pairing) throws -> URL {

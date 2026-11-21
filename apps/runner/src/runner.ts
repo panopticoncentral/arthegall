@@ -152,7 +152,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
       const instructions = exercise
         ? `This is an explicitly enabled synthetic approval exercise. Use the shell tool with login=false to run exactly: ${command}. Request approval for the write. Do not try any other command, tool, or alternative operation after denial. Then report_outcome with a concise description of whether the write succeeded or was declined.`
         : `${context.instructions}\n${context.access ? "Use read_context. For a requested range call read_usage and present both sources, date range, coverage, subtotals and unknowns. For a follow-up use priorReport from read_context as the selected report. Follow the assignmentInstructions and current preference from read_context when writing reports. On a report reply, if the user gives ongoing guidance, set assignmentPreference in report_outcome to the updated complete set of presentation preferences, retaining other applicable preferences. For a question about this report omit assignmentPreference. Never estimate spend." : ""}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`;
-      if (exercise) store.publish(context.runId, { kind: 'activity', message: `Operator enabled a one-run synthetic approval exercise: ${command}. Scope: this assignment workspace; each native request requires an exact browser decision.` });
+      if (exercise) store.publish(context.runId, { kind: 'activity', message: `Operator enabled a one-run synthetic approval exercise: ${command}. Scope: this assignment workspace; each native request requires an exact user decision.` });
       const tools: string[] = [];
       const capabilities: { admin?: (op: AdminOperation) => Promise<unknown>; usage?: (range: DateRange) => Promise<UsageReport> } = {};
       let evidence: Promise<UsageReport> | undefined;
@@ -188,7 +188,9 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         cwd: workspace, runtimeWorkspaceRoots: [workspace], permissions: connection.permissionProfile, approvalPolicy, approvalsReviewer: 'user',
         model: connection.model.model, config: { ...threadConfig(connection.inherited, service.url, binding.token, tools), 'features.shell_tool': Boolean(exercise) },
         baseInstructions: 'You are an Arthegall agent. Use the runner MCP tools for context and explicit outcomes. Never spawn agents or use tools outside your grant.',
-        developerInstructions: [instructions, `This run provides the following Arthegall tools: ${['read_context', 'report_outcome', ...tools].join(', ')}. Use the current tools and instructions when acting on requests in this conversation.`].join('\n'),
+        developerInstructions: [instructions, context.administrator && !exercise
+          ? 'Direct the user to the approval in the reporting agent’s Arthegall DM. Both the Mac and browser clients support reporting access and schedule decisions.' : null,
+          `This run provides the following Arthegall tools: ${['read_context', 'report_outcome', ...tools].join(', ')}. Use the current tools and instructions when acting on requests in this conversation.`].filter(Boolean).join('\n'),
       };
       // A resumed Codex thread retains earlier instructions and tool history.
       // Compare the stable setup only. MCP credentials and endpoints rotate per run.
