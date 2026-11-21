@@ -1,10 +1,10 @@
 // Run after npm run build on macOS. All services, credentials, and usage records are synthetic.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from '../dist/apps/server/src/server.js';
 import { ServerStore } from '../dist/apps/server/src/store.js';
 import { RunnerStore } from '../dist/apps/runner/src/store.js';
@@ -12,6 +12,12 @@ import { startRunner } from '../dist/apps/runner/src/runner.js';
 import { CodexRpc } from '../dist/apps/runner/src/codex/rpc.js';
 import { availablePort } from '../dist/tests/helpers/port.js';
 
+const args = process.argv.slice(2);
+if (args.length > 1 || (args.length === 1 && args[0] !== '--ui')) {
+  console.error('Usage: node tests/mac-reporting.mjs [--ui]');
+  process.exit(1);
+}
+const uiEnvironment = args[0] === '--ui' ? xcodeEnvironment() : undefined;
 const port = await availablePort();
 const origin = `http://127.0.0.1:${port}`;
 const root = mkdtempSync(join(tmpdir(), 'arthegall-mac-reporting-'));
@@ -53,12 +59,12 @@ const bundle = 'org.arthegall.fixture.t' + randomUUID();
 const manifest = join(root, 'fixture.json');
 writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode(), bundle, fixtureURL: origin + fixtureRoute }), { mode: 0o600 });
 try {
-  if (process.argv.includes('--ui')) {
+  if (uiEnvironment) {
     await run('xcodebuild', ['-project', 'apps/mac/Arthegall.xcodeproj', '-scheme', 'Arthegall',
       '-destination', `platform=macOS,arch=${process.arch === 'arm64' ? 'arm64' : 'x86_64'}`,
       '-derivedDataPath', resolve('dist/mac-ui'), '-parallel-testing-enabled', 'NO',
       '-only-testing:ArthegallUITests/ReportingTests', `ARTHEGALL_APP_ID=${bundle}`, 'test'],
-    { ...process.env, TEST_RUNNER_ARTHEGALL_MAC_FIXTURE: manifest });
+    { ...uiEnvironment, TEST_RUNNER_ARTHEGALL_MAC_FIXTURE: manifest });
   } else {
     const app = join(root, 'ReportingProbe.app');
     const executable = join(app, 'Contents', 'MacOS', 'ReportingProbe');
@@ -96,6 +102,27 @@ try {
   local.close();
   store.close();
   rmSync(root, { recursive: true, force: true });
+}
+
+function xcodeEnvironment() {
+  const version = env => spawnSync('xcodebuild', ['-version'], { env, encoding: 'utf8' });
+  const selected = version(process.env);
+  if (selected.status === 0) return process.env;
+
+  const standard = '/Applications/Xcode.app/Contents/Developer';
+  if (!process.env.DEVELOPER_DIR && existsSync(join(standard, 'usr/bin/xcodebuild'))) {
+    const env = { ...process.env, DEVELOPER_DIR: standard };
+    if (version(env).status === 0) {
+      console.log('Using Xcode at /Applications/Xcode.app for this test.');
+      return env;
+    }
+  }
+
+  const detail = selected.stderr?.trim() || selected.error?.message;
+  if (detail) console.error(detail);
+  console.error('The Mac window test requires full Xcode. Install and open Xcode to finish setup, or select your installed copy with DEVELOPER_DIR.');
+  console.error('Example: DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer node tests/mac-reporting.mjs --ui');
+  process.exit(1);
 }
 
 function completed() {
