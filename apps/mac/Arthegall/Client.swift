@@ -156,6 +156,10 @@ struct ClientError: LocalizedError {
     let message: String
     var status: Int?
     var errorDescription: String? { message }
+
+    static var incompatibleServer: ClientError {
+        ClientError(message: "This server does not support Mac client protocol v1. Update the Arthegall server.", status: 404)
+    }
 }
 
 private final class RedirectPolicy: NSObject, URLSessionTaskDelegate {
@@ -211,7 +215,7 @@ final class Client {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ClientError(message: "Invalid server response.") }
         guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 404 { throw ClientError(message: "This server does not support Mac client protocol v1.", status: 404) }
+            if http.statusCode == 404 { throw ClientError.incompatibleServer }
             let problem = try? JSONDecoder().decode([String: String].self, from: data)
             throw ClientError(message: problem?["error"] ?? "Server returned HTTP \(http.statusCode).", status: http.statusCode)
         }
@@ -219,9 +223,17 @@ final class Client {
     }
 
     func pair(origin: URL, code: String) async throws -> Pairing {
-        let credentials = try await load(post(request(origin, "pair"), ["code": code]), as: AppSession.self)
-        guard credentials.version == 1 else { throw ClientError(message: "Unsupported server protocol.") }
-        return Pairing(origin: origin, session: credentials)
+        do {
+            let credentials = try await load(post(request(origin, "pair"), ["code": code]), as: AppSession.self)
+            guard credentials.version == 1 else { throw ClientError(message: "Unsupported server protocol.") }
+            return Pairing(origin: origin, session: credentials)
+        } catch let failure as ClientError where failure.status == 403 {
+            // A browser-only server can reject unknown POSTs at its origin check before routing them.
+            let probe = try? await session.data(for: request(origin, "snapshot"))
+            if (probe?.1 as? HTTPURLResponse)?.statusCode == 404 { throw ClientError.incompatibleServer }
+            try Task.checkCancellation()
+            throw failure
+        }
     }
 
     func snapshot(_ pairing: Pairing) async throws -> Snapshot {
