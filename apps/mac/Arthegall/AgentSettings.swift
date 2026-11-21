@@ -143,6 +143,7 @@ struct AgentSettings: View {
                 scope(assignment: pending.assignmentId, runner: pending.runnerId)
                 HStack {
                     Button("Allow recurring reports") { decideSchedule(pending, "accept") }
+                        .accessibilityHint("Allows \(pending.name) to read usage on this runner every day at \(pending.time) Pacific.")
                     Button("Decline schedule") { decideSchedule(pending, "decline") }
                 }.disabled(!canChange)
             }
@@ -154,7 +155,9 @@ struct AgentSettings: View {
                     scope(assignment: assignment, runner: runner)
                     Group {
                         Button("Allow for this assignment") { decideAccess(grant, "accept", "assignment") }
+                            .accessibilityHint("Allows \(grant.name) to read usage on this runner until the assignment closes.")
                         Button("Allow next run only") { decideAccess(grant, "accept", "run") }
+                            .accessibilityHint("Allows \(grant.name) to read usage on this runner for one run.")
                         Button("Decline") { decideAccess(grant, "decline", "assignment") }
                     }.disabled(!canChange)
                 } else { Text("This server did not provide the assignment and runner for this request.") }

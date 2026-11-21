@@ -73,3 +73,24 @@ Run `node tests/mac-reporting.mjs` after building the services for the reporting
 The window test requires the full Xcode app. If the standalone Command Line Tools are selected, the launcher tries `/Applications/Xcode.app` for that run. For Xcode installed elsewhere, set `DEVELOPER_DIR` to its `Contents/Developer` directory when running the test.
 
 Run `node tests/mac-recovery.mjs` to verify recovery through the Swift model, or `node tests/mac-recovery.mjs --ui` to exercise the same journey through the Mac window. The fixture verifies a conflicting edit from a second pairing, an actual CLI backup and restore, a pause across relaunch, recheck with an incomplete runner journal, resume with the intact journal, history cleanup, and a reply to the recovered report. It verifies the report’s original run ID, message ID and stored evidence. Set `ARTHEGALL_PACKAGE_PATH` to use a built host package for the backup and restore commands.
+
+### Authenticated provider and packaged host
+
+Use a runner Mac with Codex installed and signed in. Build the host package in a fresh directory and opt in to the live test.
+
+```sh
+package_root=$(mktemp -d)
+npm run package -- "$package_root/host"
+ARTHEGALL_LIVE_CODEX=1 ARTHEGALL_PACKAGE_PATH="$package_root/host" node tests/mac-live.mjs
+```
+
+The Swift client pairs with a temporary packaged server and uses the authenticated Codex runner. It verifies an Administrator DM across a server and runner restart, approval and decline of a single diagnostic file write, scoped usage access, and a reply to a specific saved report. The fixture sets `ARTHEGALL_CODEX_USAGE_DIR` and `ARTHEGALL_CLAUDE_USAGE_DIR` to synthetic usage directories. The test makes live provider calls and removes its temporary pairing after success.
+
+### Keyboard and VoiceOver acceptance
+
+On a logged-in client Mac, pair a disposable app with an isolated host that has a pending command approval and a saved report with recorded usage. The conversation and reporting UI tests check the accessibility labels and Command-Return. Use the app with VoiceOver for the full walkthrough.
+
+1. With macOS Keyboard navigation enabled, use Tab and Shift-Tab between controls and the arrow keys in the conversation list. Open Settings with Command-Comma. Move to the composer, enter a message, and send it with Command-Return.
+2. In an approval card, listen for the agent, the exact command and scope, and the consequences of the two decision buttons. In reporting settings, check that the controls distinguish one run, the assignment lifetime, and a recurring schedule.
+3. Open a saved report and expand Recorded usage. Check that VoiceOver announces the saved date range, the Codex and Claude sections, and each section’s coverage and counts. Copy text from both the recorded evidence and Original message text and compare it with the displayed fixture.
+4. Choose Reply to report, type an unsent draft, and quit and reopen the app. Check that the reply target and draft return together. The signed update test also checks this across app replacement.

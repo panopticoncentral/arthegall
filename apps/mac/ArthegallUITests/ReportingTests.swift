@@ -57,6 +57,7 @@ final class ReportingTests: XCTestCase {
         XCTAssertTrue(firstTotal.waitForExistence(timeout: 15))
         let evidence = app.disclosureTriangles["recorded-usage-" + first]
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
+        XCTAssertTrue(evidence.label.contains("Recorded usage · 2020-06-14"))
         clickChevron(evidence)
         let coverage = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "No local records", "No local records")
         let noRecords = app.staticTexts.matching(coverage).firstMatch
@@ -102,7 +103,7 @@ final class ReportingTests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         composer.click()
         composer.typeText(text)
-        app.buttons["Send"].click()
+        composer.typeKey(.return, modifierFlags: .command)
     }
 
     @MainActor private func openDM(_ id: String, name: String, in app: XCUIApplication) {

@@ -253,11 +253,16 @@ private struct CommandApprovalCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Command approval needed", systemImage: "hand.raised").font(.headline)
+                .accessibilityLabel("Command approval needed for \(agent)")
+                .accessibilityAddTraits(.isHeader)
             Text("Allow \(agent) to run this operation once?")
             Text(verbatim: approval.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                .accessibilityLabel("Command and scope. \(approval.command)")
             HStack {
                 Button("Approve once") { decide(true) }
+                    .accessibilityHint("Allows \(agent) to run the displayed command once.")
                 Button("Decline command") { decide(false) }
+                    .accessibilityHint("Denies this command request.")
             }.buttonStyle(.bordered).disabled(disabled)
         }
         .padding(12)

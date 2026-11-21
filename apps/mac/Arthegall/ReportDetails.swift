@@ -16,6 +16,8 @@ struct ReportDetails: View {
             .padding(.vertical, 6)
             .textSelection(.enabled)
         }
+        .accessibilityLabel("Recorded usage · \(evidence.range.label)")
+        .accessibilityHint("Shows the saved Codex and Claude coverage and counts for this report.")
         .accessibilityIdentifier("recorded-usage-" + id)
         DisclosureGroup("Original message text") {
             Text(verbatim: source).font(.system(.body, design: .monospaced))
@@ -27,7 +29,7 @@ struct ReportDetails: View {
 
     private func usage(_ provider: String, _ source: Message.ReportEvidence.SourceUsage) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(provider).font(.headline)
+            Text(provider).font(.headline).accessibilityAddTraits(.isHeader)
             Text("\(coverage(source.coverage)) · \(count(source.responses)) distinct responses found")
             Text("Input \(count(source.input)) (cached \(count(source.cachedInput))) · Output \(count(source.output)) (reasoning \(count(source.reasoningOutput))) · Total \(count(source.total))")
             Text("Actual spend \(spend(source.actualSpendUsd))")

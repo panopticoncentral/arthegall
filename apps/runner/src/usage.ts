@@ -132,8 +132,8 @@ async function sourceUsage(source: Source, roots: string[], range: DateRange): P
 }
 
 export async function readUsage(input: DateRange, roots = {
-  codex: process.env.CODEX_HOME ?? join(homedir(), '.codex'),
-  claude: process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+  codex: process.env.ARTHEGALL_CODEX_USAGE_DIR ?? process.env.CODEX_HOME ?? join(homedir(), '.codex'),
+  claude: process.env.ARTHEGALL_CLAUDE_USAGE_DIR ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
 }): Promise<UsageReport> {
   const range = DateRange.parse(input);
   const [codex, claude] = await Promise.all([
