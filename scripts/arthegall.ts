@@ -39,12 +39,12 @@ if (command === 'setup') {
     if (!old) writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600, flag: 'wx' });
     const runner = new RunnerStore(join(root, 'runner', 'runner.sqlite'), ids.runnerId);
     runner.close();
-    console.log(`Open ${origin} after starting the server and runner.\nPairing code (valid for ten minutes): ${store.createPairingCode()}`);
+    console.log(`Server address: ${origin}\nPairing code (valid for ten minutes): ${store.createPairingCode()}\nOnce services are running, open Arthegall.app and enter the address and code.`);
   } finally { store.close(); }
 } else if (command === 'pair') {
-  readConfig();
+  const config = readConfig();
   const store = new ServerStore(join(root, 'server', 'server.sqlite'));
-  try { console.log(`Pairing code (valid for ten minutes): ${store.createPairingCode()}`); } finally { store.close(); }
+  try { console.log(`Server address: ${config.origin}\nPairing code (valid for ten minutes): ${store.createPairingCode()}`); } finally { store.close(); }
 } else if (command === 'backup' || command === 'restore') {
   if (process.argv.length !== 4) throw new Error('Specify one backup directory');
   const directory = resolve(process.argv[3]!);

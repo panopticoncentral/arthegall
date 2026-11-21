@@ -10,6 +10,10 @@ export function macTestEnvironment(script) {
     console.error(`Usage: node ${script} [--ui]`);
     process.exit(1);
   }
+  return xcodeEnvironment(`node ${script} --ui`);
+}
+
+export function xcodeEnvironment(command) {
   const version = env => spawnSync('xcodebuild', ['-version'], { env, encoding: 'utf8' });
   const selected = version(process.env);
   if (selected.status === 0) return process.env;
@@ -24,7 +28,7 @@ export function macTestEnvironment(script) {
   const detail = selected.stderr?.trim() || selected.error?.message;
   if (detail) console.error(detail);
   console.error('The Mac window test requires full Xcode. Install and open Xcode to finish setup, or select your installed copy with DEVELOPER_DIR.');
-  console.error(`Example: DEVELOPER_DIR=${standard} node ${script} --ui`);
+  console.error(`Example: DEVELOPER_DIR=${standard} ${command}`);
   process.exit(1);
 }
 

@@ -20,7 +20,8 @@
     "server": "node dist/scripts/arthegall.js server",
     "runner": "node dist/scripts/arthegall.js runner",
     "test:browser": "npm run build && playwright test",
-    "package": "npm run build && node dist/scripts/package.js"
+    "package": "npm run build && node dist/scripts/package.js",
+    "package:mac": "tsc -p tsconfig.json && node dist/scripts/package-mac.js"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",

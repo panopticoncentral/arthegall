@@ -20,7 +20,7 @@ Copy the complete package directory to the destination machine. Keep the package
 ./bin/arthegall status
 ```
 
-Installation copies an immutable build into `~/.arthegall/releases`, creates/reuses the local identities, prints a ten-minute browser pairing code, and installs two per-user launchd services. Open the printed URL and enter the code. Services run as the signed-in macOS user and restart at that user's login; they are not system daemons.
+Installation copies an immutable build into `~/.arthegall/releases`, creates or reuses the local identities, prints the server address and a ten-minute pairing code, and installs two per-user launchd services. Open [Arthegall.app](mac-client.md#package-the-mac-app) on the client Mac and enter the address and code. During the migration the printed address also opens the browser client. Services run as the signed-in macOS user and restart at that user's login.
 
 Set `ARTHEGALL_DATA_DIR` consistently for an alternate private data directory. Set `ARTHEGALL_PORT` and, when using a proxy, `ARTHEGALL_ORIGIN` before the first setup. Existing configuration wins on repeated setup. Set `ARTHEGALL_CODEX_BIN` to an absolute Codex executable path if it is not on PATH. The installer records that executable and the installation PATH for launchd.
 

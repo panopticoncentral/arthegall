@@ -2,6 +2,22 @@
 
 The first native client pairs a Mac with an Arthegall server, opens its existing DMs, and sends messages. Run the server from the same checkout to get the installed-client v1 routes. The app targets macOS 14 or later. A client Mac only needs the app and network access to its server.
 
+## Package the Mac app
+
+Run the Mac packager from a checkout with Xcode selected. It builds a universal Release app for Apple silicon and Intel, signs it, archives it, and verifies the signature and bundle metadata after extracting the ZIP.
+
+```sh
+npm run package:mac -- --output release/mac-initial --build-number 1
+```
+
+For a private install, pass a signing identity trusted by the target Macs with `--identity`. Use the same bundle ID and signing identity when increasing `--build-number` for the update. The default ad hoc signature supports a local package check. Build the client ZIP separately from the host package.
+
+Extract the ZIP, copy **Arthegall.app** to its installation location, and open it. Enter the server address and code printed by host setup or `arthegall pair`. To update, quit the app and replace it at the same location with the newer build. On reopening, verify that the paired server, selected conversation, saved report and unsent draft are available. The host services continue to run while the app is replaced.
+
+For automated acceptance, build two signed archives with the same unused bundle identifier under `org.arthegall.fixture`, the same signing identity, and increasing build numbers. Build the server with `npm run build`, then run `node tests/mac-update.mjs INITIAL.zip UPDATE.zip` from a logged-in Mac desktop. It uses an isolated installation and synthetic data to verify the first pairing and preserve the saved report, reply target, and draft across replacement.
+
+## Build for development
+
 Build the development app from the repository root using Xcode.
 
 ```sh
