@@ -109,6 +109,14 @@ final class ConversationModel: ObservableObject {
         return result
     }
 
+    func runActivity(for id: String, before: Int? = nil) async throws -> RunActivityPage {
+        guard let pairing else { throw CancellationError() }
+        let result = try await client.runActivity(pairing, runId: id, before: before)
+        try Task.checkCancellation()
+        guard self.pairing == pairing else { throw CancellationError() }
+        return result
+    }
+
     @discardableResult
     func saveSetting<Body: Encodable & Sendable>(_ path: String, _ body: Body) async -> Bool {
         guard let pairing, online, snapshot?.settingsVersion == 1, !savingSettings else { return false }
@@ -141,6 +149,21 @@ final class ConversationModel: ObservableObject {
         guard snapshot?.commandApprovalsVersion == 1, snapshot?.recovery == nil,
               snapshot?.approvals?.contains(where: { $0.id == approval.id }) == true else { return }
         await saveSetting("approvals/" + approval.id, ["decision": allow ? "accept" : "decline"])
+    }
+
+    func setPinned(_ pinned: Bool, runID: String) async {
+        guard snapshot?.recoveryVersion == 1, snapshot?.recovery == nil else { return }
+        await saveSetting("runs/\(runID)/pin", ["pinned": pinned])
+    }
+
+    func recheckRunners() async {
+        guard snapshot?.recoveryVersion == 1, snapshot?.recovery != nil else { return }
+        await saveSetting("recovery/recheck", [String: String]())
+    }
+
+    func resumeDispatch() async {
+        guard snapshot?.recoveryVersion == 1, snapshot?.recovery?.ready == true else { return }
+        await saveSetting("recovery/resume", [String: String]())
     }
 
     @discardableResult

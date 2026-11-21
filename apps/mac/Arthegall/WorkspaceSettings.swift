@@ -96,6 +96,35 @@ private struct SystemSettings: View {
 
     var body: some View {
         Form {
+            if let recovery = snapshot.recovery {
+                Section("Restore recovery") {
+                    Label("Dispatch paused after restore", systemImage: "pause.circle")
+                    ForEach(recovery.runners) { runner in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Runner \(runner.id)").textSelection(.enabled)
+                            Text(recoveryStatus(runner.status)).foregroundStyle(.secondary)
+                        }
+                    }
+                    ForEach(recovery.issues) { issue in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Run \(issue.runId)", systemImage: "exclamationmark.triangle")
+                            Text(verbatim: issue.reason).foregroundStyle(.secondary)
+                        }.textSelection(.enabled)
+                    }
+                    if recovery.ready {
+                        Label("All runner records agree. Dispatch can safely resume.", systemImage: "checkmark.circle")
+                    }
+                    if snapshot.recoveryVersion == 1 {
+                        HStack {
+                            Button("Check runners again") { Task { await model.recheckRunners() } }
+                            Button("Resume dispatch") { Task { await model.resumeDispatch() } }
+                                .disabled(!recovery.ready)
+                        }.buttonStyle(.bordered).disabled(!model.online || model.savingSettings)
+                    } else {
+                        Text("Open the browser or update this server to manage restore recovery from the Mac app.")
+                    }
+                }
+            }
             Section("Connections") {
                 LabeledContent("Server", value: model.pairing?.origin.absoluteString ?? "")
                 LabeledContent("Local runner", value: snapshot.runnerConnected ? "Connected" : "Waiting for runner")
@@ -108,9 +137,6 @@ private struct SystemSettings: View {
                 }
                 Button("Unpair This Mac…", action: unpair).disabled(!model.online || model.busy)
             }
-            if snapshot.recovery != nil {
-                Label("Server paused for restore reconciliation", systemImage: "pause.circle")
-            }
             if let status = snapshot.backups {
                 BackupSettingsForm(model: model, status: status, paused: snapshot.recovery != nil)
             }
@@ -120,6 +146,16 @@ private struct SystemSettings: View {
                     .disabled(!model.online || model.savingSettings || snapshot.recovery != nil)
             }
         }.formStyle(.grouped)
+    }
+
+    private func recoveryStatus(_ status: String) -> String {
+        switch status {
+        case "offline": "Offline · Waiting for reconnect"
+        case "unsupported": "Update the runner to check its durable records"
+        case "checking": "Checking durable records"
+        case "checked": "Inventory checked"
+        default: "Status unavailable"
+        }
     }
 }
 

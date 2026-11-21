@@ -53,7 +53,7 @@ if (command === 'setup') {
     console.log('Verified server backup saved to ' + directory);
   } else {
     await restoreServer(root, directory, readConfig());
-    console.log('Server restored with dispatch paused. Start services and open the paired browser to reconcile.');
+    console.log('Server restored with dispatch paused. Start services and open a paired client to reconcile.');
   }
 } else if (command === 'server') {
   const unlock = acquireProcessLock(root, 'server');

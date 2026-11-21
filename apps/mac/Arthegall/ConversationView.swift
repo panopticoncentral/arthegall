@@ -6,11 +6,21 @@ struct ConversationView: View {
 
     let sourceMessage: String?
     let openAssignment: () -> Void
+    let openRecovery: () -> Void
     @FocusState private var composerFocused: Bool
+    @State private var selectedRun: Snapshot.RunSummary?
 
     var body: some View {
         let messages = model.snapshot?.messages.filter { $0.conversationId == dm.id } ?? []
         VStack(spacing: 0) {
+            if model.snapshot?.recovery != nil {
+                HStack {
+                    Label("Dispatch paused after restore", systemImage: "pause.circle")
+                    Spacer()
+                    Button("Review recovery", action: openRecovery)
+                }
+                .padding(12).background(WorkspaceStyle.inset)
+            }
             if messages.isEmpty {
                 Color.clear.overlay {
                     VStack(alignment: .leading, spacing: 14) {
@@ -23,7 +33,10 @@ struct ConversationView: View {
                 }
             } else {
                 Transcript(model: model, dm: dm, messages: messages, sourceMessage: sourceMessage,
-                           openAssignment: openAssignment, reply: { message in
+                           openAssignment: openAssignment, openRun: {
+                               model.settingsError = nil
+                               selectedRun = $0
+                           }, reply: { message in
                                model.reply(to: message, in: dm.id)
                                composerFocused = true
                            })
@@ -42,6 +55,7 @@ struct ConversationView: View {
                 .padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 18)
         }
         .background(WorkspaceStyle.canvas)
+        .sheet(item: $selectedRun) { run in RunDetailsView(model: model, runID: run.id) }
     }
 
     private var emptyHint: String {
@@ -57,6 +71,7 @@ private struct Transcript: View {
     let messages: [Message]
     let sourceMessage: String?
     let openAssignment: () -> Void
+    let openRun: (Snapshot.RunSummary) -> Void
     let reply: (Message) -> Void
     @State private var followsLatest = true
     @State private var lastHeight: CGFloat = 0
@@ -76,6 +91,9 @@ private struct Transcript: View {
                             let state = supportsApprovals && run?.state == "approval" && pending.isEmpty ? "decision_sent" : run?.state
                             MessageRow(dm: dm, message: message, runState: state,
                                        supportsApprovals: supportsApprovals, openAssignment: openAssignment,
+                                       runDetails: run.flatMap { entry in
+                                           snapshot?.recoveryVersion == 1 ? { openRun(entry) } : nil
+                                       },
                                        reply: dm.closed == 0 && model.local.pending == nil ? { reply(message) } : nil)
                                 .id(message.id)
                             if supportsApprovals {
@@ -98,6 +116,7 @@ private struct Transcript: View {
                     }
                     Color.clear.frame(height: 1).id("latest")
                 }
+                .accessibilityIdentifier("conversation-transcript")
                 .coordinateSpace(name: "transcript")
                 .onAppear {
                     if let sourceMessage {
@@ -144,6 +163,7 @@ private struct MessageRow: View {
     let runState: String?
     let supportsApprovals: Bool
     let openAssignment: () -> Void
+    let runDetails: (() -> Void)?
     let reply: (() -> Void)?
 
     private var user: Bool { message.author == "user" }
@@ -174,6 +194,10 @@ private struct MessageRow: View {
                         }
                         Button("Assignment settings", action: openAssignment).buttonStyle(.link)
                     }
+                }
+                if let runDetails {
+                    Button("Run details", action: runDetails).buttonStyle(.link)
+                        .accessibilityIdentifier("run-details-" + message.id)
                 }
                 if !user {
                     MessageStatus(state: runState ?? message.state, supportsApprovals: supportsApprovals)
@@ -252,7 +276,7 @@ private struct Composer: View {
         let replyTo = pending ? model.local.pending?.replyTo : model.local.replyTargets?[dm.id]
         let draft = model.local.pending?.text ?? model.local.drafts[dm.id] ?? ""
         let tooLong = draft.utf16.count > 16_000
-        let label = pending ? "Retry Send" : "Send"
+        let label = pending ? "Retry Send" : model.snapshot?.recovery != nil ? "Queue Message" : "Send"
         VStack(alignment: .leading, spacing: 8) {
             if !model.online {
                 Label(model.connectionStatus, systemImage: "wifi.slash")

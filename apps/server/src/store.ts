@@ -365,4 +365,13 @@ export class ServerStore {
     }))();
   }
   events(after: number) { return this.db.prepare('SELECT sequence,kind,data,created_at AS createdAt FROM events WHERE sequence>? ORDER BY sequence LIMIT 200').all(after); }
+  runActivity(id: string, before = Number.MAX_SAFE_INTEGER) {
+    if (!this.db.prepare('SELECT 1 FROM runs WHERE id=?').get(id)) throw new Conflict('Run is unavailable');
+    const rows = this.db.prepare(`SELECT sequence,kind,created_at AS createdAt,
+      COALESCE(json_extract(data,'$.message'),json_extract(data,'$.reason'),json_extract(data,'$.error')) AS detail
+      FROM events WHERE json_extract(data,'$.runId')=? AND sequence<? AND kind!='progress'
+      ORDER BY sequence DESC LIMIT 51`).all(id, before) as { sequence: number }[];
+    const events = rows.slice(0, 50);
+    return { events, nextBefore: rows.length > events.length ? events.at(-1)!.sequence : null };
+  }
 }

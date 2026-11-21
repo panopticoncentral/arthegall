@@ -131,7 +131,7 @@ private struct ContentView: View {
                                   unpair: { confirmUnpair = true })
             } else if let dm = conversations.first(where: { $0.id == model.selected }) {
                 ConversationView(model: model, dm: dm, sourceMessage: sourceMessage,
-                                 openAssignment: { settings = .assignment(dm.id) })
+                                 openAssignment: { settings = .assignment(dm.id) }, openRecovery: { settings = .system })
                     .id(dm.id)
                     .toolbar {
                         if dm.administrator == 0 {

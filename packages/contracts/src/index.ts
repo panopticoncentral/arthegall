@@ -123,3 +123,7 @@ export const Snapshot = z.object({
   runs: z.array(z.object({ id: Id, state: z.string(), messageId: Id, pinned: z.number(), history: z.enum(['full','pending','pruned']), historyError: z.string().nullable() })),
 });
 export type Snapshot = z.infer<typeof Snapshot>;
+export const RunActivityPage = z.object({
+  events: z.array(z.object({ sequence: z.int().positive(), kind: z.string(), createdAt: z.string(), detail: z.string().nullable() })),
+  nextBefore: z.int().positive().nullable(),
+});

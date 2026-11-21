@@ -4,7 +4,7 @@ import websocket from '@fastify/websocket';
 import staticFiles from '@fastify/static';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
-import { BackupSettings, RetentionDays, RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
+import { BackupSettings, RetentionDays, RunActivityPage, RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
 import type { DailyBackups } from '../../../scripts/daily-backups.js';
 import type { Scan } from './restore-recovery.js';
 import { Conflict, ServerStore } from './store.js';
@@ -120,7 +120,8 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       .all(sessionId, Date.now()),
     runnerConnected: [...runners.values()].some((runner) => runner.ready) });
   app.get('/api/snapshot', async request => snapshot(store.session(browserToken(request))!));
-  app.get('/client/v1/snapshot', async request => ({ ...snapshot(store.session(appToken(request))!), settingsVersion: 1, commandApprovalsVersion: 1 }));
+  app.get('/client/v1/snapshot', async request => ({ ...snapshot(store.session(appToken(request))!),
+    settingsVersion: 1, commandApprovalsVersion: 1, recoveryVersion: 1 }));
   app.post('/client/v1/messages', async request => store.send(store.session(appToken(request))!, request.body));
   app.post('/client/v1/revoke', async request => {
     store.revokeSession(store.session(appToken(request))!);
@@ -130,6 +131,11 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   app.get('/api/activity', async (request) => {
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
     return store.events(query.after);
+  });
+  app.get('/client/v1/runs/:id/activity', async request => {
+    const { id } = z.object({ id: z.uuid() }).parse(request.params);
+    const { before } = z.object({ before: z.coerce.number().int().positive().optional() }).parse(request.query);
+    return RunActivityPage.parse(store.runActivity(id, before));
   });
   const checkApprovalChanges = async () => {
     if (store.recovery.paused()) throw new Conflict('Review runner records before changing approvals or assignments');
@@ -155,17 +161,17 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       return { saved: true };
     }, { allowDuringRecovery: true });
   }
-  app.post('/api/recovery/resume', async () => {
+  settingsPost('/recovery/resume', async () => {
     store.recovery.resume();
     return { saved: true };
-  });
-  app.post('/api/recovery/recheck', async () => {
+  }, { allowDuringRecovery: true });
+  settingsPost('/recovery/recheck', async () => {
     if (store.recovery.paused()) for (const [socket, runner] of runners) {
       store.recovery.offline(runner.runnerId);
       socket.terminate();
     }
     return { saved: true };
-  });
+  }, { allowDuringRecovery: true });
   app.post('/api/messages', async (request) => store.send(store.session(browserToken(request))!, SendMessage.parse(request.body)));
   const readSettings: RouteHandlerMethod = async request => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
@@ -209,7 +215,7 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     for (const runner of runners.values()) runner.nextCleanup = 0;
     return { saved: true };
   });
-  app.post('/api/runs/:id/pin', { preHandler: checkApprovalChanges }, async request => {
+  settingsPost('/runs/:id/pin', async request => {
     const { id } = z.object({id:z.uuid()}).parse(request.params);
     const { pinned } = z.strictObject({pinned:z.boolean()}).parse(request.body);
     store.retention.pin(id,pinned);

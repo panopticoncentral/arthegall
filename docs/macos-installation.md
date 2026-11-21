@@ -44,7 +44,7 @@ If the browser says **Codex sign-in needed**, run `codex login` as the runner's 
 
 ## Execution history
 
-Open **Settings → System → Execution history** in the paired Mac app or browser to set how many days to keep completed run details. The default is 30 days from completion. Before shortening the period, use the browser to open **Run details → Pin run** beneath any assistant message whose detailed evidence you want to keep. **Unpin run** makes the run eligible again based on its original completion time. Pinning is available until cleanup begins.
+Open **Settings → System → Execution history** in the paired Mac app or browser to set how many days to keep completed run details. The default is 30 days from completion. Before shortening the period, open **Run details → Pin run** beneath any assistant message whose detailed evidence you want to keep. **Unpin run** makes the run eligible again based on its original completion time. Pinning is available until cleanup begins.
 
 Cleanup runs automatically when the runner is connected. An expired run loses its intermediate progress text, activity details, per-run provider references and dedicated scheduled workspace. The DM keeps its final text, recorded usage and reply target. Shared assignment workspaces, provider source records, approvals, operation results and schedule receipts retain their own lifetimes. Runs with unresolved outcomes keep their details. Open **Run details** to check cleanup status or read a reason for deferral.
 
@@ -78,9 +78,9 @@ arthegall restore /path/to/private/backups/server-snapshot
 arthegall start
 ```
 
-Restore checks the staged database, manifest, schema and enrolled identity before atomically replacing the server database. A validation failure leaves the current database installed. A successful restore persists a dispatch pause. A paired browser can inspect history and queue messages while dispatch is paused.
+Restore checks the staged database, manifest, schema and enrolled identity before atomically replacing the server database. A validation failure leaves the current database installed. A successful restore persists a dispatch pause. A paired Mac app or browser can inspect history and queue messages while dispatch is paused.
 
-Open a paired DM and look for **Dispatch paused after restore**. Each runner must reconnect with a version that supports inventory. The server checks its retained dispatches, decisions and deliveries, including acknowledged results. A recovered scheduled report uses the original occurrence, DM and message IDs. **Resume dispatch** becomes available once every enrolled runner has checked in and all records agree. Restarting either service repeats the check and preserves the pause.
+Open a paired DM and look for **Dispatch paused after restore**. In the Mac app, choose **Review recovery** to open the runner and issue list in System settings. Each runner must reconnect with a version that supports inventory. The server checks its retained dispatches, decisions and deliveries, including acknowledged results. A recovered scheduled report uses the original occurrence, DM and message IDs. **Resume dispatch** becomes available once every enrolled runner has checked in and all records agree. Restarting either service repeats the check and preserves the pause.
 
 For an unresolved run, use the displayed run ID to inspect its runner execution and the corresponding server activity or approval. Preserve both databases. If evidence was missing, reconnect the runner with its intact records or restore a more recent verified server snapshot, then select **Check runners again**. A missing post-backup interactive command, an earlier scheduled dispatch without its original message IDs, a missing central-operation receipt, or conflicting approval decisions can require a newer snapshot. Recovery keeps dispatch paused while those differences remain.
 

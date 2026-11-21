@@ -16,6 +16,8 @@ Under **Agents**, choose a reporting agent to edit its instructions or inspect e
 
 In a saved report, expand **Recorded usage** for source coverage and figures or **Original message text** to read the saved Markdown. Use **Reply to report** to attach that report to your draft. The app keeps the reply target with the draft and with any pending send. For a one-time command request, review the operation in its DM before choosing **Approve once** or **Decline command**.
 
+Open **Run details** below a response to read its activity and pin or unpin its detailed history. After a server restore, choose **Review recovery** in a DM or open **Settings → System**. Review each runner and unresolved run, then use **Check runners again** after correcting the runner records. **Resume dispatch** becomes available when all enrolled runner records agree. See the [host restore instructions](macos-installation.md#back-up-and-restore-the-server).
+
 ## Client protocol v1
 
 Use the `/client/v1` prefix and the `X-Arthegall-Client: 1` header for HTTP and the WebSocket upgrade. Pairing uses the existing short-lived code. The JSON response carries the protocol version, session ID, and opaque bearer token. Supply the token in the Authorization header on subsequent requests. A missing v1 route or unsupported pairing version requires a compatible server. Servers with native settings support include `settingsVersion: 1` in the native snapshot. Older servers continue to support conversations and the Mac prompts for a server update when opening Settings. The settings routes share validation, revision checks, recovery restrictions, and session attribution with the browser.
@@ -30,6 +32,9 @@ Use the `/client/v1` prefix and the `X-Arthegall-Client: 1` header for HTTP and 
 | Change settings | Post to `/retention`, `/backups/settings`, `/backups/retry`, or the conversation’s `/definition`, `/schedule` and `/close` routes. |
 | Decide reporting access | `POST /schedules/:id` for a recurring schedule or `POST /access/:id` for read-only usage access. Requests identify their assignment and runner. |
 | Decide one command request | `POST /approvals/:id` with `{"decision":"accept"}` or `{"decision":"decline"}`. Servers that support the route include `commandApprovalsVersion: 1` in the native snapshot. |
+| Read run activity | `GET /runs/:id/activity`. Pass the returned `nextBefore` as `before` to load older events. Servers that support native run details and recovery include `recoveryVersion: 1` in the native snapshot. |
+| Pin or unpin a run | `POST /runs/:id/pin` with `{"pinned":true}` or `{"pinned":false}`. |
+| Reconcile after a restore | `POST /recovery/recheck` to restart the runner inventory check. `POST /recovery/resume` requests resumption and succeeds when the server reports that runner records agree. |
 | Revoke | `POST /revoke` with `{}` invalidates the credential and closes its subscription. HTTP 401 prompts pairing again. Errors carry an `error` string, for example `{"error":"Pair this app to continue"}`. |
 
 ## Verification
@@ -50,3 +55,5 @@ Run `node tests/mac-conversation.mjs --session-only` for the same server and run
 Run `node tests/mac-reporting.mjs` after building the services for the reporting drill through the same Swift model. It creates an agent and an on-demand report, approves a daily schedule, and advances the isolated server clock between Mac processes. It checks both scheduled reports and their saved evidence, retries a targeted reply after losing its acknowledgment, and verifies the preference in the next dispatch. It also checks that a declined replacement and a stale decision from a second pairing preserve the active schedule. Add `--ui` to exercise the main reporting journey through the Mac window with Xcode UI testing.
 
 The window test requires the full Xcode app. If the standalone Command Line Tools are selected, the launcher tries `/Applications/Xcode.app` for that run. For Xcode installed elsewhere, set `DEVELOPER_DIR` to its `Contents/Developer` directory when running the test.
+
+Run `node tests/mac-recovery.mjs` to verify recovery through the Swift model, or `node tests/mac-recovery.mjs --ui` to exercise the same journey through the Mac window. The fixture verifies a conflicting edit from a second pairing, an actual CLI backup and restore, a pause across relaunch, recheck with an incomplete runner journal, resume with the intact journal, history cleanup, and a reply to the recovered report. It verifies the report’s original run ID, message ID and stored evidence. Set `ARTHEGALL_PACKAGE_PATH` to use a built host package for the backup and restore commands.

@@ -1,10 +1,9 @@
 // Run after npm run build on macOS. All services, credentials, and usage records are synthetic.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from '../dist/apps/server/src/server.js';
 import { ServerStore } from '../dist/apps/server/src/store.js';
 import { RunnerStore } from '../dist/apps/runner/src/store.js';
@@ -12,12 +11,9 @@ import { startRunner } from '../dist/apps/runner/src/runner.js';
 import { CodexRpc } from '../dist/apps/runner/src/codex/rpc.js';
 import { availablePort } from '../dist/tests/helpers/port.js';
 
-const args = process.argv.slice(2);
-if (args.length > 1 || (args.length === 1 && args[0] !== '--ui')) {
-  console.error('Usage: node tests/mac-reporting.mjs [--ui]');
-  process.exit(1);
-}
-const uiEnvironment = args[0] === '--ui' ? xcodeEnvironment() : undefined;
+import { buildProbe, macTestEnvironment, run, runMacUI } from './helpers/mac-test.mjs';
+
+const uiEnvironment = macTestEnvironment('tests/mac-reporting.mjs');
 const port = await availablePort();
 const origin = `http://127.0.0.1:${port}`;
 const root = mkdtempSync(join(tmpdir(), 'arthegall-mac-reporting-'));
@@ -70,23 +66,9 @@ writeFileSync(manifest, JSON.stringify({ origin, code: store.createPairingCode()
   fixtureURL: origin + fixtureRoute }), { mode: 0o600 });
 try {
   if (uiEnvironment) {
-    await run('xcodebuild', ['-project', 'apps/mac/Arthegall.xcodeproj', '-scheme', 'Arthegall',
-      '-destination', `platform=macOS,arch=${process.arch === 'arm64' ? 'arm64' : 'x86_64'}`,
-      '-derivedDataPath', resolve('dist/mac-ui'), '-parallel-testing-enabled', 'NO',
-      '-only-testing:ArthegallUITests/ReportingTests', `ARTHEGALL_APP_ID=${bundle}`, 'test'],
-    { ...uiEnvironment, TEST_RUNNER_ARTHEGALL_MAC_FIXTURE: manifest });
+    await runMacUI('ReportingTests', bundle, manifest, uiEnvironment);
   } else {
-    const app = join(root, 'ReportingProbe.app');
-    const executable = join(app, 'Contents', 'MacOS', 'ReportingProbe');
-    mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
-    writeFileSync(join(app, 'Contents', 'Info.plist'), `<plist version="1.0"><dict>
-      <key>CFBundleExecutable</key><string>ReportingProbe</string>
-      <key>CFBundleIdentifier</key><string>${bundle}</string>
-      <key>CFBundlePackageType</key><string>APPL</string></dict></plist>`);
-    execFileSync('xcrun', ['swiftc', '-parse-as-library', '-module-cache-path', resolve('dist/mac-probe-cache'),
-      ...['Client', 'SettingsData', 'Storage', 'ConversationModel'].map(name => `apps/mac/Arthegall/${name}.swift`),
-      'tests/fixtures/MacReportingProbe.swift', '-o', executable], { stdio: 'inherit' });
-    execFileSync('codesign', ['--force', '--sign', '-', app]);
+    const executable = buildProbe(root, bundle, 'MacReportingProbe');
     await run(executable, [manifest, 'schedule']);
     await advance(15);
     await run(executable, [manifest, 'reply']);
@@ -114,27 +96,6 @@ try {
   rmSync(root, { recursive: true, force: true });
 }
 
-function xcodeEnvironment() {
-  const version = env => spawnSync('xcodebuild', ['-version'], { env, encoding: 'utf8' });
-  const selected = version(process.env);
-  if (selected.status === 0) return process.env;
-
-  const standard = '/Applications/Xcode.app/Contents/Developer';
-  if (!process.env.DEVELOPER_DIR && existsSync(join(standard, 'usr/bin/xcodebuild'))) {
-    const env = { ...process.env, DEVELOPER_DIR: standard };
-    if (version(env).status === 0) {
-      console.log('Using Xcode at /Applications/Xcode.app for this test.');
-      return env;
-    }
-  }
-
-  const detail = selected.stderr?.trim() || selected.error?.message;
-  if (detail) console.error(detail);
-  console.error('The Mac window test requires full Xcode. Install and open Xcode to finish setup, or select your installed copy with DEVELOPER_DIR.');
-  console.error('Example: DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer node tests/mac-reporting.mjs --ui');
-  process.exit(1);
-}
-
 function completed() {
   return store.db.prepare(`SELECT o.due_date, r.id AS run_id, m.id AS message_id, m.text, c.evidence, d.payload
     FROM report_occurrences o JOIN runs r ON r.id=o.run_id JOIN report_context c ON c.run_id=r.id
@@ -156,13 +117,4 @@ async function browserDecline(id) {
   const response = await server.inject({ method: 'POST', url: `/api/schedules/${id}`,
     headers: { host: new URL(origin).host, origin, cookie: `arthegall=${browser.token}` }, payload: { decision: 'decline' } });
   assert.equal(response.statusCode, 200);
-}
-
-async function run(executable, args, env = process.env) {
-  const child = spawn(executable, args, { stdio: 'inherit', env });
-  const status = await new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', resolve);
-  });
-  assert.equal(status, 0, `${executable} completed`);
 }

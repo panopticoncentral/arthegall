@@ -65,6 +65,7 @@ struct Snapshot: Decodable {
 
     let settingsVersion: Int?
     let commandApprovalsVersion: Int?
+    let recoveryVersion: Int?
     let pairings: [SessionSummary]
     let runners: [Runner]
     let retentionDays: Int
@@ -86,12 +87,45 @@ struct Snapshot: Decodable {
         let expires: Double
     }
     struct Runner: Decodable { let status: String }
-    struct Recovery: Decodable { let ready: Bool }
+    struct Recovery: Decodable {
+        let ready: Bool
+        let runners: [RunnerStatus]
+        let issues: [Issue]
 
-    struct RunSummary: Decodable {
+        struct RunnerStatus: Decodable, Identifiable {
+            let id: String
+            let status: String
+        }
+
+        struct Issue: Decodable, Identifiable {
+            let runId: String
+            let reason: String
+            var id: String { runId }
+        }
+    }
+
+    struct RunSummary: Decodable, Identifiable {
         let id: String
         let messageId: String
         let state: String
+        let pinned: Int
+        let history: History
+        let historyError: String?
+
+        enum History: String, Decodable { case full, pending, pruned }
+    }
+}
+
+struct RunActivityPage: Decodable {
+    let events: [Event]
+    let nextBefore: Int?
+
+    struct Event: Decodable, Identifiable {
+        let sequence: Int
+        let kind: String
+        let createdAt: String
+        let detail: String?
+        var id: Int { sequence }
     }
 }
 
@@ -202,6 +236,14 @@ final class Client {
     func reportingSettings(_ pairing: Pairing, conversation: String) async throws -> ReportingSettings {
         try await load(request(pairing.origin, "conversations/" + conversation + "/settings", token: pairing.session.token),
                        as: ReportingSettings.self)
+    }
+
+    func runActivity(_ pairing: Pairing, runId: String, before: Int?) async throws -> RunActivityPage {
+        var endpoint = request(pairing.origin, "runs/\(runId)/activity", token: pairing.session.token)
+        if let before {
+            endpoint.url = endpoint.url?.appending(queryItems: [URLQueryItem(name: "before", value: String(before))])
+        }
+        return try await load(endpoint, as: RunActivityPage.self)
     }
 
     func saveSetting<Body: Encodable & Sendable>(_ pairing: Pairing, path: String, body: Body) async throws {
