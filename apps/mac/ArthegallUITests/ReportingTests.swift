@@ -55,21 +55,23 @@ final class ReportingTests: XCTestCase {
         app.launch()
         let firstTotal = app.staticTexts["Synthetic total: 34"].firstMatch
         XCTAssertTrue(firstTotal.waitForExistence(timeout: 15))
-        let evidence = app.descendants(matching: .any)["recorded-usage-" + first].firstMatch
+        let evidence = app.disclosureTriangles["recorded-usage-" + first]
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
-        evidence.click()
+        clickChevron(evidence)
         let coverage = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "No local records", "No local records")
         let noRecords = app.staticTexts.matching(coverage).firstMatch
         XCTAssertTrue(noRecords.waitForExistence(timeout: 10), "The expanded report should show Claude coverage as ‘No local records’.")
-        evidence.click()
-        let original = app.descendants(matching: .any)["original-message-" + first].firstMatch
-        original.click()
-        XCTAssertTrue(app.descendants(matching: .any)["original-report-source"].firstMatch.waitForExistence(timeout: 10))
-        original.click()
-        let reply = app.buttons["reply-to-" + first]
+        clickChevron(evidence)
+        let original = app.disclosureTriangles["original-message-" + first]
+        clickChevron(original)
+        let source = app.staticTexts["original-message-" + first]
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        XCTAssertEqual(source.value as? String, "Synthetic total: 34")
+        clickChevron(original)
+        let reply = app.links["reply-to-" + first]
         XCTAssertTrue(reply.waitForExistence(timeout: 10))
         reply.click()
-        XCTAssertTrue(app.buttons["Clear reply target"].exists)
+        XCTAssertTrue(app.links["Clear reply target"].waitForExistence(timeout: 10))
         send("Put source coverage first from now on.", in: app)
         XCTAssertTrue(app.buttons["Retry Send"].waitForExistence(timeout: 10))
         app.terminate()
@@ -87,6 +89,12 @@ final class ReportingTests: XCTestCase {
         app.menuItems["Unpair This Mac…"].click()
         app.buttons["Unpair"].click()
         XCTAssertTrue(app.buttons["Pair Mac"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor private func clickChevron(_ disclosure: XCUIElement) {
+        // The frame includes the label and expanded content. The chevron stays in the top row.
+        disclosure.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 26, dy: 8)).click()
     }
 
     @MainActor private func send(_ text: String, in app: XCUIApplication) {
