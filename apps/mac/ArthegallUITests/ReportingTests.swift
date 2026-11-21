@@ -58,8 +58,9 @@ final class ReportingTests: XCTestCase {
         let evidence = app.descendants(matching: .any)["recorded-usage-" + first].firstMatch
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
         evidence.click()
-        let noRecords = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "No local records")).firstMatch
-        XCTAssertTrue(noRecords.waitForExistence(timeout: 10))
+        let coverage = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "No local records", "No local records")
+        let noRecords = app.staticTexts.matching(coverage).firstMatch
+        XCTAssertTrue(noRecords.waitForExistence(timeout: 10), "The expanded report should show Claude coverage as ‘No local records’.")
         evidence.click()
         let original = app.descendants(matching: .any)["original-message-" + first].firstMatch
         original.click()
