@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 final class ReportingTests: XCTestCase {
@@ -55,25 +56,37 @@ final class ReportingTests: XCTestCase {
         app.launch()
         let firstTotal = app.staticTexts["Synthetic total: 34"].firstMatch
         XCTAssertTrue(firstTotal.waitForExistence(timeout: 15))
-        let evidence = app.disclosureTriangles["recorded-usage-" + first]
+        let evidence = app.buttons["recorded-usage-" + first]
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
         XCTAssertTrue(evidence.label.contains("Recorded usage · 2020-06-14"))
-        clickChevron(evidence)
+        evidence.click()
         let coverage = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "No local records", "No local records")
         let noRecords = app.staticTexts.matching(coverage).firstMatch
         XCTAssertTrue(noRecords.waitForExistence(timeout: 10), "The expanded report should show Claude coverage as ‘No local records’.")
-        clickChevron(evidence)
-        let original = app.disclosureTriangles["original-message-" + first]
-        clickChevron(original)
-        let source = app.staticTexts["original-message-" + first]
+        let firstLine = "America/Los_Angeles · Local runner records"
+        verifyCopy(of: app.staticTexts[firstLine].firstMatch, expected: firstLine, in: app)
+        evidence.click()
+        let original = app.buttons["original-message-" + first]
+        original.click()
+        let source = app.staticTexts["original-report-source"].firstMatch
         XCTAssertTrue(source.waitForExistence(timeout: 10))
         XCTAssertEqual(source.value as? String, "Synthetic total: 34")
-        clickChevron(original)
+        verifyCopy(of: source, expected: "Synthetic total: 34", in: app)
+        original.click()
         let reply = app.links["reply-to-" + first]
         XCTAssertTrue(reply.waitForExistence(timeout: 10))
         reply.click()
         XCTAssertTrue(app.links["Clear reply target"].waitForExistence(timeout: 10))
-        send("Put source coverage first from now on.", in: app)
+        let composer = app.textFields["message-composer"]
+        let draft = "Put source coverage first from now on."
+        composer.click()
+        composer.typeText(draft)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        XCTAssertEqual(composer.value as? String, draft)
+        XCTAssertTrue(app.links["Clear reply target"].exists)
+        composer.typeKey(.return, modifierFlags: .command)
         XCTAssertTrue(app.buttons["Retry Send"].waitForExistence(timeout: 10))
         app.terminate()
         app.launch()
@@ -92,10 +105,15 @@ final class ReportingTests: XCTestCase {
         XCTAssertTrue(app.buttons["Pair Mac"].waitForExistence(timeout: 10))
     }
 
-    @MainActor private func clickChevron(_ disclosure: XCUIElement) {
-        // The frame includes the label and expanded content. The chevron stays in the top row.
-        disclosure.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: 26, dy: 8)).click()
+    @MainActor private func verifyCopy(of text: XCUIElement, expected: String, in app: XCUIApplication) {
+        XCTAssertTrue(text.waitForExistence(timeout: 10))
+        // Select inside the first word, even when the accessibility frame spans the row.
+        text.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 5, dy: text.frame.height / 2)).doubleClick()
+        app.typeKey("a", modifierFlags: .command)
+        let before = NSPasteboard.general.changeCount
+        app.typeKey("c", modifierFlags: .command)
+        XCTAssertNotEqual(NSPasteboard.general.changeCount, before, "Copy should write the selected report text.")
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), expected)
     }
 
     @MainActor private func send(_ text: String, in app: XCUIApplication) {

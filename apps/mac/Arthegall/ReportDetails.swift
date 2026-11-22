@@ -4,9 +4,14 @@ struct ReportDetails: View {
     let id: String
     let source: String
     let evidence: Message.ReportEvidence
+    @State private var showsUsage = false
+    @State private var showsSource = false
 
     var body: some View {
-        DisclosureGroup("Recorded usage · \(evidence.range.label)") {
+        disclosure("Recorded usage · \(evidence.range.label)", expanded: $showsUsage)
+            .accessibilityIdentifier("recorded-usage-" + id)
+            .accessibilityHint("Shows the saved Codex and Claude coverage and counts for this report.")
+        if showsUsage {
             VStack(alignment: .leading, spacing: 12) {
                 Text("\(evidence.timeZone) · Local runner records").foregroundStyle(.secondary)
                 usage("Codex", evidence.codex)
@@ -16,15 +21,22 @@ struct ReportDetails: View {
             .padding(.vertical, 6)
             .textSelection(.enabled)
         }
-        .accessibilityLabel("Recorded usage · \(evidence.range.label)")
-        .accessibilityHint("Shows the saved Codex and Claude coverage and counts for this report.")
-        .accessibilityIdentifier("recorded-usage-" + id)
-        DisclosureGroup("Original message text") {
+        disclosure("Original message text", expanded: $showsSource)
+            .accessibilityIdentifier("original-message-" + id)
+        if showsSource {
             Text(verbatim: source).font(.system(.body, design: .monospaced))
-                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
                 .accessibilityIdentifier("original-report-source")
         }
-        .accessibilityIdentifier("original-message-" + id)
+    }
+
+    private func disclosure(_ title: String, expanded: Binding<Bool>) -> some View {
+        Button {
+            expanded.wrappedValue.toggle()
+        } label: {
+            Label(title, systemImage: expanded.wrappedValue ? "chevron.down" : "chevron.right")
+        }
+        .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
     }
 
     private func usage(_ provider: String, _ source: Message.ReportEvidence.SourceUsage) -> some View {

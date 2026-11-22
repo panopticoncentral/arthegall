@@ -73,8 +73,12 @@ final class ConversationTests: XCTestCase {
         composer.click()
         composer.typeText("/test approval")
         app.buttons["Send"].click()
-        XCTAssertTrue(app.staticTexts["Command approval needed for Administrator"].firstMatch.waitForExistence(timeout: 10))
-        let commandScope = NSPredicate(format: "label CONTAINS %@", "Command and scope. Synthetic test: read setup-note.txt")
+        let headings = NSPredicate(format: "identifier BEGINSWITH %@", "command-approval-heading-")
+        let heading = app.descendants(matching: .any).matching(headings).firstMatch
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        XCTAssertEqual(heading.label, "Command approval needed for Administrator")
+        let expectedCommand = "Command and scope. Synthetic test: read setup-note.txt"
+        let commandScope = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", expectedCommand, expectedCommand)
         XCTAssertTrue(app.staticTexts.matching(commandScope).firstMatch.exists)
         app.buttons["Approve once"].click()
         XCTAssertTrue(app.staticTexts["Synthetic approval accepted. No file operation was performed by this test provider."].firstMatch.waitForExistence(timeout: 10))

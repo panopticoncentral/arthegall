@@ -94,11 +94,11 @@ final class RecoveryTests: XCTestCase {
         XCTAssertTrue(app.buttons["Unpin run"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Unpin run"].isEnabled)
         app.buttons["Done"].click()
-        let evidence = app.disclosureTriangles["recorded-usage-" + reportID]
+        let evidence = app.buttons["recorded-usage-" + reportID]
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
-        clickChevron(evidence)
+        evidence.click()
         XCTAssertTrue(visibleText("Total 34", in: app).waitForExistence(timeout: 10))
-        clickChevron(evidence)
+        evidence.click()
         let reply = app.links["reply-to-" + reportID]
         XCTAssertTrue(reply.waitForExistence(timeout: 10))
         reply.click()
@@ -138,10 +138,6 @@ final class RecoveryTests: XCTestCase {
         let link = app.links["run-details-" + messageID]
         XCTAssertTrue(link.waitForExistence(timeout: 10))
         link.click()
-    }
-
-    @MainActor private func clickChevron(_ disclosure: XCUIElement) {
-        disclosure.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
     }
 
     private func advance(_ action: String, fixture: Fixture) async throws -> Result {
