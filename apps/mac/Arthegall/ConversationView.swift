@@ -42,7 +42,6 @@ struct ConversationView: View {
                            })
             }
             if let snapshot = model.snapshot, snapshot.settingsVersion == 1,
-               snapshot.schedules.contains(where: { $0.conversationId == dm.id && $0.state == "pending" }) ||
                snapshot.grants.contains(where: { $0.conversationId == dm.id }) {
                 Button("Review reporting access", systemImage: "hand.raised", action: openAssignment)
                     .padding(.vertical, 6)

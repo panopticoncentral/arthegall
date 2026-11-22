@@ -71,7 +71,7 @@ struct Snapshot: Decodable {
     let retentionDays: Int
     let backups: BackupStatus?
     let recovery: Recovery?
-    let schedules: [ReportSchedule]
+    let schedules: [ScheduledItem]
     let grants: [AccessRequest]
     let approvals: [CommandApproval]?
 

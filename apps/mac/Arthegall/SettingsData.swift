@@ -12,15 +12,18 @@ struct BackupStatus: Decodable {
     let timeZone: String
 }
 
-struct ReportSchedule: Decodable, Identifiable {
+struct ScheduledItem: Decodable, Identifiable {
     let id: String
-    let assignmentId: String
-    let runnerId: String
     let conversationId: String
-    let name: String
-    let time: String
+    let instruction: String
+    let nextDue: Double?
     let backfill: Int
-    let state: String
+    let when: Timing
+
+    struct Timing: Decodable {
+        let expression: String?
+        let timeZone: String?
+    }
 }
 
 struct AccessRequest: Decodable, Identifiable {
@@ -65,20 +68,4 @@ struct BackupChange: Encodable {
 struct DefinitionChange: Encodable {
     let revision: Int
     var instructions: String
-}
-
-struct ScheduleChange: Encodable {
-    let activeId: String?
-    var time: String
-    var backfill: Bool
-
-    enum CodingKeys: String, CodingKey { case activeId, time, backfill }
-
-    func encode(to encoder: Encoder) throws {
-        var fields = encoder.container(keyedBy: CodingKeys.self)
-        // The server compares this explicit null with the current active schedule.
-        try fields.encode(activeId, forKey: .activeId)
-        try fields.encode(time, forKey: .time)
-        try fields.encode(backfill, forKey: .backfill)
-    }
 }

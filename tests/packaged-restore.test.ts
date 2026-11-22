@@ -52,9 +52,9 @@ test('rotated daily backup restores acknowledged reports and preserves a paired 
     const db = new Database(path,{readonly:true});
     try { return db.prepare(sql).all(...params); } finally { db.close(); }
   }
-  const report = () => query(`SELECT o.*,r.state,r.user_message_id,r.assistant_message_id,m.conversation_id,m.text,c.evidence,d.id AS dispatch_id
-    FROM report_occurrences o JOIN runs r ON r.id=o.run_id JOIN messages m ON m.id=r.assistant_message_id
-    JOIN report_context c ON c.run_id=r.id JOIN dispatches d ON d.run_id=r.id ORDER BY o.due_date`) as {run_id:string;state:string;assistant_message_id:string;conversation_id:string;period:string;text:string;evidence:string}[];
+  const report = () => query(`SELECT o.run_id,o.due_at,r.state,r.user_message_id,r.assistant_message_id,m.conversation_id,m.text,c.evidence,d.id AS dispatch_id
+    FROM scheduled_occurrences o JOIN runs r ON r.id=o.run_id JOIN messages m ON m.id=r.assistant_message_id
+    JOIN report_context c ON c.run_id=r.id JOIN dispatches d ON d.run_id=r.id ORDER BY o.due_at`) as {run_id:string;state:string;assistant_message_id:string;conversation_id:string;period:string;text:string;evidence:string}[];
   const destination = join(root,'daily'), offline = join(root,'disconnected');
   mkdirSync(destination);
   const manual = join(destination,'operator-snapshot');
@@ -76,9 +76,9 @@ test('rotated daily backup restores acknowledged reports and preserves a paired 
     cli('backup',manual);
     renameSync(destination,offline);
     const due = Temporal.Now.zonedDateTimeISO('America/Los_Angeles').add({seconds:78}).with({second:0,millisecond:0,microsecond:0,nanosecond:0});
-    const time = due.toPlainTime().toString({smallestUnit:'minute'});
-    seed.scheduler.propose(prior.assignment,prior.ids.runner,time,false,prior.run);
-    seed.scheduler.decide(String(seed.db.prepare('SELECT id FROM report_schedules').pluck().get()),prior.session,true);
+    seed.scheduler.operate(prior.assignment, prior.ids.runner, { tool: 'schedule_item', args: {
+      instruction: 'Report usage for the previous Pacific calendar day.', missed: 'latest',
+      when: { kind: 'cron', expression: `${due.minute} ${due.hour} * * *`, timeZone: 'America/Los_Angeles' } } });
     seed.close();
     let server = launch('server');
     await waitForServer(origin);
@@ -134,9 +134,9 @@ test('rotated daily backup restores acknowledged reports and preserves a paired 
     await waitFor('the runner to acknowledge all deliveries', () => !local!.nextDelivery());
     // Materialize the following day's occurrence with the same scheduler at an
     // advanced clock. The running packaged runner executes the queued dispatch.
-    const nextDue = (query('SELECT next_due FROM report_schedules')[0] as {next_due:number}).next_due;
+    const nextDue = (query('SELECT next_due FROM scheduled_items')[0] as {next_due:number}).next_due;
     const nextDay = new ServerStore(path,()=>new Date(nextDue));
-    try { assert(nextDay.nextDispatch(prior.ids.runner)?.context.occurrence); } finally { nextDay.close(); }
+    try { nextDay.scheduler.tick(); assert(nextDay.nextDispatch(prior.ids.runner)?.context.scheduledItem); } finally { nextDay.close(); }
     await waitFor('second scheduled report', () => report()[1]?.state === 'completed');
     const second = report()[1]!;
     const completedReports = [original,second];
@@ -186,7 +186,7 @@ test('rotated daily backup restores acknowledged reports and preserves a paired 
     assert.deepEqual(preserved.hold, [{pinned:1,phase:'full'}]);
     assert.deepEqual(report(), completedReports);
     assert.deepEqual(fullDetails(), pinnedDetails);
-    const progress = () => query('SELECT id,next_date,next_due FROM report_schedules');
+    const progress = () => query('SELECT id,next_due FROM scheduled_items');
     const originalProgress = progress();
     await stop(runner); await stop(server);
 
@@ -209,7 +209,7 @@ test('rotated daily backup restores acknowledged reports and preserves a paired 
       } finally { retained.close(); }
       assert.equal(existsSync(join(backup,'manifest.json')), true);
       const archived = new Database(join(newest,'server.sqlite'),{readonly:true});
-      try { assert.deepEqual(archived.prepare('SELECT run_id FROM report_occurrences ORDER BY due_date').pluck().all(), completedReports.map(r=>r.run_id)); }
+      try { assert.deepEqual(archived.prepare('SELECT run_id FROM scheduled_occurrences ORDER BY due_at').pluck().all(), completedReports.map(r=>r.run_id)); }
       finally { archived.close(); }
     } finally { await scheduler.close(); }
     const bad = join(root,'corrupt'); cpSync(backup,bad,{recursive:true});

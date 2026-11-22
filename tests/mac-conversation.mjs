@@ -109,7 +109,6 @@ try {
     assert.ok(backups.status().lastPath);
     assert.equal(backups.status().error, null);
     assert.equal(store.reporting.settings(reportDM).instructions, 'Lead with coverage.');
-    assert.equal(store.db.prepare("SELECT COUNT(*) FROM report_schedules WHERE state='active'").pluck().get(), 1);
   }
   assert.equal(sends, 3);
   assert.equal(store.db.prepare('SELECT COUNT(*) FROM dispatches').pluck().get(), 2);

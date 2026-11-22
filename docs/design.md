@@ -14,7 +14,9 @@ An **assignment** is a responsibility given to an agent. It might be a one-off i
 
 Assignments can draw on several forms of interaction over time. An investigation can start with a conversation and end with a written result. Cleanup can ordinarily run quietly and still have a history the user can inspect. A ticket sweep can ask for a decision on the day it encounters something unusual.
 
-When a recurring assignment misses several scheduled runs, the default is to produce one current result when work can resume and record the missed occurrences. An assignment can explicitly require backfill for each missed occurrence. For a daily report, this means an agent waking after three days normally sends one report covering the latest due reporting period.
+An assignment can have any number of scheduled instructions. An agent can create, list, change or cancel its own assignment’s follow-ups. It can give an absolute time with an offset, a delay in seconds, or a cron expression with an IANA time zone. For example, a build check in five minutes and a weekday summary can belong to the same investigation. Closing the assignment cancels its outstanding items.
+
+The server records each due occurrence even while the runner is busy or offline. The agent receives the original due time and instruction when the runner takes the work. A one-off stays queued across restarts. Each recurring item defaults to delivering the latest due occurrence and recording earlier skips. The agent can request backfill for an item to deliver every occurrence in order. For a daily report, this means an agent waking after three days normally sends one report covering the latest due reporting period.
 
 ## DMs, channels, and collaboration
 
@@ -72,13 +74,13 @@ Settings
             └── Daily usage report
 ```
 
-**Agent settings** in Rowan’s DM header opens the same Rowan page. The schedule in the DM and the details of a saved report link directly to **Daily usage report**. The assignment page names its owner and links back to the conversation. On a narrow screen, each level occupies the main view, with a back link to its parent. Returning to the DM restores the selected conversation and draft.
+**Agent settings** in Rowan’s DM header opens the same Rowan page. Each saved report links to its assignment settings. The assignment page names its owner and links back to the conversation. On a narrow screen, each level occupies the main view, with a back link to its parent. Returning to the DM restores the selected conversation and draft.
 
 | Scope | What the user finds there | Where a change takes effect |
 | --- | --- | --- |
 | **System** | Under **Connections**, inspect runners, provider sign-in status and Mac pairings. Under **Backups**, choose the destination and number of copies and inspect the last backup. Under **Execution history**, set how long to keep detailed run evidence. | Backup and retention policies cover this installation. Unpairing targets the current Mac app. A user can still pin an individual run from its details in the conversation. |
 | **Agent** | Read the agent’s role and instructions, inspect definition revisions, and see preferred provider, model and effort. Review tools and machine access with the scope of each grant. Browse the agent’s assignments. | An instruction edit creates a definition revision for this agent’s future work. A grant used by just one assignment links to that assignment and shows its duration. |
-| **Assignment** | Read the responsibility, instructions and saved preferences. Inspect the delivery conversation, schedule and time zone, missed-run policy, runner and approved tools. Review a proposed schedule change or close the assignment here. | Changes apply to this responsibility. A recurring assignment carries them into future runs. Closing it ends future dispatch and access granted for that assignment. Its reports and conversation stay available. |
+| **Assignment** | Read the responsibility, instructions and saved preferences. Inspect the delivery conversation, schedule and time zone, missed-run policy, runner and approved tools. Review scheduled items or close the assignment here. | Changes apply to this responsibility. A recurring assignment carries them into future runs. Closing it ends future dispatch and access granted for that assignment. Its reports and conversation stay available. |
 
 ### How the scopes fit together
 
@@ -86,11 +88,11 @@ Suppose Rowan owns a daily usage report and a weekly build review. The system pa
 
 Chat and Settings use the same server-owned records. Asking the Administrator to revise Rowan’s instructions and saving those instructions on Rowan’s page both produce a definition revision visible in the same history. A preference saved from a reply to a report appears on the report’s assignment page, with a link to the reply that established it. The edit form names the affected agent or assignment before the user saves.
 
-Ordinary edits take effect within their stated scope. Adding a tool, granting access to another machine, or expanding standing authority opens a proposal showing who needs what access, why and for how long. For example, changing the report from 8 AM to 9 AM shows the active and proposed schedules together. The 8 AM schedule continues until the user approves its replacement. A decision made from Settings or the DM resolves the same request in both places.
+Ordinary edits take effect within their stated scope. Adding a tool, granting access to another machine, or expanding standing authority opens a proposal showing who needs what access, why and for how long. Changing a scheduled time in the agent’s DM uses the existing assignment permissions. A decision made from Settings or the DM resolves the same request in both places.
 
 ### First pass
 
-Open **Settings → System** for connections, backups and retention. From a reporting DM, **Agent settings** opens its instructions and revision history. The schedule below the agent name and **Assignment settings** on a saved report open the assignment, including its schedule, preferences, access decisions and closure action. A proposed schedule takes effect after approval in the DM or in Settings.
+Open **Settings → System** for connections, backups and retention. From a reporting DM, **Agent settings** opens its instructions and revision history. **Assignment settings** on a saved report opens the assignment, including its schedule, preferences, access decisions and closure action. The agent can manage multiple scheduled items through its DM.
 
 This first pass uses the current local-runner reporting workflow. Selection among multiple runners or providers and editing model and effort preferences belong to the broader agent design. The existing [reporting workflow](milestone-2.md) and [daily schedule behavior](milestone-3.md) describe the reporting behavior.
 

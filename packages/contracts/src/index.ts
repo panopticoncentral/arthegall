@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 import { AdminOperation, DateRange, Preference, ReportAccess, UsageReport } from './reporting.js';
 
+import { ScheduleTiming, ScheduleOperation, ScheduleListResult, ScheduledItemResult } from './scheduling.js';
+
+export const AgentOperation = z.union([AdminOperation, ScheduleOperation]);
+export type AgentOperation = z.infer<typeof AgentOperation>;
+
 export const ProtocolVersion = 1;
 export const Id = z.string().uuid();
 export const Outcome = z.strictObject({
@@ -22,6 +27,7 @@ export const ExecutionContext = z.strictObject({
   range: DateRange.optional(),
   priorReport: UsageReport.optional(),
   assignmentInstructions: z.string().max(2000).optional(),
+  scheduledItem: z.strictObject({ id: Id, dueAt: z.iso.datetime() }).optional(),
   occurrence: z.strictObject({ dueDate: z.iso.date(), dueAt: z.iso.datetime(), scheduleId: Id }).optional(),
   preference: z.strictObject({ revision: z.number().int().positive(), instructions: Preference }).optional(),
   messages: z.array(z.strictObject({
@@ -44,10 +50,15 @@ export const Approval = z.strictObject({
   approvalId: Id, command: z.string().max(16_000),
 });
 export const OperationResult = z.union([
+  ScheduledItemResult, ScheduleListResult,
   z.strictObject({ error: z.string().max(300) }),
   z.strictObject({ name: z.string(), conversationId: Id, assignmentId: Id, reportRunId: Id.optional(), access: z.string() }),
 ]);
 export type OperationResult = z.infer<typeof OperationResult>;
+// Old receipts can still arrive after an upgrade or during restore. No active tool exposes this operation.
+const RetiredScheduleOperation = z.strictObject({ tool: z.literal('schedule_usage_report'), args: z.strictObject({
+  name: z.string(), time: z.string(), backfill: z.boolean().optional(),
+}) });
 export const Delivery = z.strictObject({
   type: z.literal('delivery'), version: z.literal(ProtocolVersion),
   deliveryId: Id, runId: Id, sequence: z.number().int().positive(),
@@ -55,7 +66,7 @@ export const Delivery = z.strictObject({
     z.strictObject({ kind: z.literal('progress'), text: z.string().max(32_000) }),
     z.strictObject({ kind: z.literal('outcome'), outcome: Outcome }),
     z.strictObject({ kind: z.literal('approval'), approval: Approval }),
-    z.strictObject({ kind: z.literal('operation'), operation: AdminOperation }),
+    z.strictObject({ kind: z.literal('operation'), operation: z.union([AgentOperation, RetiredScheduleOperation]) }),
     z.strictObject({ kind: z.literal('usage'), report: UsageReport }),
     z.strictObject({ kind: z.literal('activity'), message: z.string().max(2_000) }),
   ]),
@@ -112,7 +123,7 @@ export const Snapshot = z.object({
   backups: DailyBackupStatus.optional(),
   retentionDays: RetentionDays,
   conversations: z.array(z.object({ id: Id, name: z.string(), administrator: z.number(), closed: z.number() })),
-  schedules: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, conversationId: Id, name: z.string(), time: z.string(), backfill: z.number(), state: z.enum(['pending','active']) })),
+  schedules: z.array(z.object({ id: Id, conversationId: Id, instruction: z.string(), nextDue: z.number().nullable(), when: ScheduleTiming, backfill: z.number() })),
   grants: z.array(z.object({ id: Id, assignmentId: Id, runnerId: Id, name: z.string(), conversationId: Id })),
   recovery: z.object({ runners: z.array(z.object({ id: Id, status: z.string() })),
     issues: z.array(z.object({ runId: Id, reason: z.string() })), ready: z.boolean() }).nullable(),

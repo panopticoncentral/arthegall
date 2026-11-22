@@ -37,19 +37,13 @@ final class ReportingTests: XCTestCase {
         let reporterDM = try await fixtureID(["lookupRowan": true], fixture: fixture)
         openDM(reporterDM, name: "Rowan", in: app)
         reviewReportingAccess(in: app)
-        let allowRun = app.buttons["Allow next run only"]
+        let allowRun = app.buttons["Allow for this assignment"]
         XCTAssertTrue(allowRun.waitForExistence(timeout: 10))
         allowRun.click()
         app.buttons["Back to conversation"].click()
         XCTAssertTrue(app.staticTexts["Synthetic total: 33"].firstMatch.waitForExistence(timeout: 20))
-        openDM(fixture.adminDM, name: "Administrator", in: app)
-        send("Schedule Rowan's daily report at 8:00 AM Pacific.", in: app)
-        openDM(reporterDM, name: "Rowan", in: app)
-        reviewReportingAccess(in: app)
-        let allowRecurring = app.buttons["Allow recurring reports"]
-        XCTAssertTrue(allowRecurring.waitForExistence(timeout: 10))
-        allowRecurring.click()
-        XCTAssertTrue(app.buttons["Change schedule"].waitForExistence(timeout: 10))
+        send("Schedule a daily report at 8:00 AM Pacific.", in: app)
+        XCTAssertTrue(app.staticTexts["Scheduled daily usage"].firstMatch.waitForExistence(timeout: 10))
         app.terminate()
 
         let first = try await fixtureID(["day": 15], fixture: fixture)

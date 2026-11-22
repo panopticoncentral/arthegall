@@ -35,11 +35,11 @@ test('upgrade deployed schema with paired browser, prior messages and provider t
     try {
       assert.equal(server.session('synthetic-browser'),session);
       assert.equal(server.setup('synthetic').conversationId,dm);
-      assert.equal(server.db.prepare('SELECT count(*) FROM definition_history').pluck().get(),3);
+      assert.equal(server.db.prepare('SELECT count(*) FROM definition_history').pluck().get(),4);
       assert.deepEqual(local.session(assignment), { thread_id: 'synthetic-thread', thread_configuration: null });
       server.send(session,{ commandId: randomUUID(), text: 'Continue' });
       const dispatch = server.nextDispatch(runner)!;
-      assert.equal(dispatch.context.definitionVersion,3); assert.equal(dispatch.context.administrator,true);
+      assert.equal(dispatch.context.definitionVersion,4); assert.equal(dispatch.context.administrator,true);
       assert.equal(dispatch.context.messages[0]?.text,'Earlier result');
       assert.deepEqual(server.db.pragma('foreign_key_check'),[]);
     } finally { server.close(); local.close(); }
@@ -74,7 +74,7 @@ test('durable setup, narrowed access, scoped reports, rejection, redelivery and 
     assert.equal(runner.requestOperation(admin.runId,setup),op);
     deliver();
     const created = runner.operationResult(op);
-    assert(created && !('error' in created));
+    assert(created && 'conversationId' in created);
     const range = { start:'2020-03-01', end:'2020-03-01' };
     const request: AdminOperation = { tool:'run_usage_report', args:{ name:'Rowan',range } };
     runner.requestOperation(admin.runId,request); deliver();

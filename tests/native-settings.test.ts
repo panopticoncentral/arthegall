@@ -47,13 +47,7 @@ test('Mac settings share records between pairings, enforce revision checks and a
     assert.equal(grant.runnerId, runnerId);
     assert.equal((await post('access/' + grant.id, { decision: 'accept', duration: 'run' })).statusCode, 200);
     assert.equal(store.db.prepare('SELECT session_id FROM report_access WHERE id=?').pluck().get(grant.id), mac.id);
-    assert.equal((await post(conversation + '/schedule', { activeId: null, time: '08:00', backfill: false })).statusCode, 200);
-    const schedule = store.db.prepare('SELECT id FROM report_schedules WHERE proposed_by=?').pluck().get(mac.id);
-    assert.ok(schedule);
-    const decision = '/schedules/' + schedule;
-    assert.equal((await server.inject({ method: 'POST', url: '/client/v1' + decision, headers: peer, payload: { decision: 'accept' } })).statusCode, 200);
-    assert.equal((await post('schedules/' + schedule, { decision: 'decline' })).statusCode, 409);
-    assert.equal(store.db.prepare('SELECT session_id FROM report_schedules WHERE id=?').pluck().get(schedule), second.id);
+    assert.equal((await post(conversation + '/schedule', { activeId: null, time: '08:00', backfill: false })).statusCode, 404);
     assert.equal((await post(conversation + '/close', {})).statusCode, 200);
     assert.equal(store.reporting.assignment(dm).closed, 1);
 

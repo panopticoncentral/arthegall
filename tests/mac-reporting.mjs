@@ -31,7 +31,6 @@ const store = new ServerStore(join(root, 'server.sqlite'), () => clock);
 const ids = store.setup('synthetic');
 const local = new RunnerStore(join(root, 'runner.sqlite'), ids.runnerId);
 const server = await createServer(store, origin);
-const secondClient = store.pair(store.createPairingCode(), 'synthetic-second-client');
 const fixtureRoute = `/fixture/${randomUUID()}`;
 const replyText = 'Put source coverage first from now on.';
 let replySubmissions = 0;
@@ -52,9 +51,7 @@ server.post(fixtureRoute, async (request, reply) => {
     const sent = store.snapshot().messages.some(message => message.conversationId === ids.conversationId && message.author === 'user');
     return reply.code(409).send({ error: sent ? 'The Administrator received a message, but Rowan was not created.' : 'No Administrator message reached the fixture server.' });
   }
-  if (request.body.decline) await declineFromSecondClient(request.body.decline);
-  else throw new Error('Unknown fixture action');
-  return { ok: true };
+  throw new Error('Unknown fixture action');
 });
 await server.listen({ host: '127.0.0.1', port });
 const runner = await startRunner(local, { runnerId: ids.runnerId, token: 'synthetic', serverUrl: origin,
@@ -97,10 +94,10 @@ try {
 }
 
 function completed() {
-  return store.db.prepare(`SELECT o.due_date, r.id AS run_id, m.id AS message_id, m.text, c.evidence, d.payload
-    FROM report_occurrences o JOIN runs r ON r.id=o.run_id JOIN report_context c ON c.run_id=r.id
+  return store.db.prepare(`SELECT date(o.due_at/1000,'unixepoch') AS due_date, r.id AS run_id, m.id AS message_id, m.text, c.evidence, d.payload
+    FROM scheduled_occurrences o JOIN runs r ON r.id=o.run_id JOIN report_context c ON c.run_id=r.id
     JOIN messages m ON m.id=r.assistant_message_id JOIN dispatches d ON d.run_id=r.id
-    WHERE r.state='completed' ORDER BY o.due_date`).all();
+    WHERE r.state='completed' ORDER BY o.due_at`).all();
 }
 
 async function advance(day) {
@@ -111,10 +108,4 @@ async function advance(day) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert.fail(`Scheduled delivery for June ${day} did not finish`);
-}
-
-async function declineFromSecondClient(id) {
-  const response = await server.inject({ method: 'POST', url: `/client/v1/schedules/${id}`,
-    headers: { host: new URL(origin).host, 'x-arthegall-client': '1', authorization: 'Bearer ' + secondClient.token }, payload: { decision: 'decline' } });
-  assert.equal(response.statusCode, 200);
 }

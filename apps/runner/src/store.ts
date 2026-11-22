@@ -5,7 +5,8 @@ import { dirname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Decision, Delivery, Dispatch, type InventoryItem, HistoryReceipt, type PruneHistory, OperationResult, Outcome } from '../../../packages/contracts/src/index.js';
-import type { AdminOperation } from '../../../packages/contracts/src/reporting.js';
+import type { AgentOperation } from '../../../packages/contracts/src/index.js';
+import { ScheduleOperation } from '../../../packages/contracts/src/scheduling.js';
 import { compactReceipt, journalHash } from '../../../packages/contracts/src/history.js';
 import { migrations } from './migrations.js';
 
@@ -75,13 +76,15 @@ export class RunnerStore {
     this.db.prepare('INSERT INTO deliveries(id,run_id,payload) VALUES (?,?,?)').run(delivery.deliveryId, runId, JSON.stringify(delivery));
     return delivery.deliveryId;
   }
-  requestOperation(runId: string, operation: AdminOperation) {
+  requestOperation(runId: string, operation: AgentOperation) {
     return this.db.transaction(() => {
-      const key = JSON.stringify(operation);
+      const scheduling = ScheduleOperation.safeParse(operation).success;
+      // Reads and edits can change within one run. Transport retries reuse the delivery ID.
+      const key = scheduling && operation.tool !== 'schedule_item' ? randomUUID() : JSON.stringify(operation);
       const existing = this.db.prepare('SELECT delivery_id FROM operations WHERE run_id=? AND operation=?').pluck().get(runId, key);
       if (existing) return String(existing);
       const execution = this.execution(runId);
-      if (execution.state !== 'running' || !Dispatch.parse(JSON.parse(execution.payload)).context.administrator) throw new Error('Administrator execution required');
+      if (execution.state !== 'running' || !scheduling && !Dispatch.parse(JSON.parse(execution.payload)).context.administrator) throw new Error('Active authorized execution required');
       const id = this.enqueue(runId, { kind: 'operation', operation });
       this.db.prepare('INSERT INTO operations(run_id,operation,delivery_id) VALUES (?,?,?)').run(runId, key, id);
       return id;
@@ -146,7 +149,7 @@ export class RunnerStore {
     })();
     // Only scheduled runs own their own directory. Interactive assignments share
     // a workspace and a provider session across many runs.
-    if (dispatch.context.occurrence) {
+    if (dispatch.context.scheduledItem || dispatch.context.occurrence) {
       try {
         if (!(await lstat(workspaceRoot)).isDirectory()) throw new Error('Workspace root was replaced');
         let path = await realpath(workspaceRoot);

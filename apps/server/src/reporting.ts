@@ -10,7 +10,7 @@ export const onDemandAdministratorInstructions = 'You are the Arthegall administ
 const schedulingInstructions = ' For a daily schedule, use schedule_usage_report on the existing assignment with the requested Pacific time. Enable backfill only when explicitly requested.';
 export const historicalAdministratorInstructions = onDemandAdministratorInstructions + schedulingInstructions + ' A separate browser decision activates the schedule.';
 export const administratorInstructions = onDemandAdministratorInstructions.replace('using the browser approval card', 'in Arthegall.app')
-  + schedulingInstructions + ' A separate decision in Arthegall.app activates the schedule.';
+  + ' For recurring work, ask the user to give the scheduling instruction directly to the responsible agent in its DM.';
 
 export class Reporting {
   constructor(private db: Database.Database) {}
@@ -63,7 +63,6 @@ export class Reporting {
       this.db.prepare(`UPDATE messages SET state='blocked',text='Assignment closed.' WHERE id IN
         (SELECT assistant_message_id FROM runs WHERE assignment_id=? AND state IN ('queued','awaiting_access'))`).run(assignmentId);
       this.db.prepare("UPDATE runs SET state='blocked' WHERE assignment_id=? AND state IN ('queued','awaiting_access')").run(assignmentId);
-      this.db.prepare("UPDATE report_schedules SET state='retired' WHERE assignment_id=? AND state IN ('active','pending')").run(assignmentId);
       this.event('reporting_assignment_closed', { assignmentId, sessionId });
     })();
   }

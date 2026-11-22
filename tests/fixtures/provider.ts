@@ -1,3 +1,4 @@
+import { yesterday } from '../../packages/contracts/src/reporting.js';
 // Synthetic JSON-RPC provider for process-crash/authentication tests; no model calls.
 import { createInterface } from 'node:readline';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -51,14 +52,32 @@ lines.on('line', (line) => { void (async () => {
           if (mode() === 'mac-reporting' && context.messages.at(-1)?.text.startsWith('Create')) {
             await call('create_reporting_assignment', { name: 'Rowan', instructions: 'Report usage' });
             await call('run_usage_report', { name: 'Rowan', range: { start: '2020-06-13', end: '2020-06-13' } });
-          } else await call('schedule_usage_report', { name: 'Rowan', time: '08:00' });
-        } else if (context.range) {
+          }
+        } else if (context.messages.at(-1)?.text.startsWith('Schedule')) {
+          await call('schedule_item', { instruction: 'Report usage for the previous Pacific calendar day.',
+            when: { kind: 'cron', expression: '0 8 * * *', timeZone: 'America/Los_Angeles' } });
+          message = 'Scheduled daily usage';
+        } else if (context.range || context.scheduledItem) {
           appendFileSync(join(root,'scheduled-executions'),context.runId + '\n');
-          const report = await call('read_usage', context.range);
+          const report = await call('read_usage', context.range ?? yesterday(new Date(context.scheduledItem.dueAt)));
           message = (context.preference ? 'Source coverage: local records. ' : '') + 'Synthetic total: ' + report.codex.total;
         } else {
           assignmentPreference = 'Put source coverage first.';
           message = mode() === 'mac-reporting' ? `Saved your preference for the report with ${context.priorReport.codex.total} tokens.` : 'Saved your preference.';
+        }
+      }
+      if (mode() === 'followups') {
+        if (context.scheduledItem) {
+          appendFileSync(join(root, 'wakeups'), JSON.stringify({ wake: context.scheduledItem, run: context.runId,
+            instruction: context.messages.at(-1).text, access: context.access?.duration }) + '\n');
+        } else {
+          const check = await call('schedule_item', { instruction: 'Check the build', when: { kind: 'after', seconds: 300 } });
+          const summary = await call('schedule_item', { instruction: 'Draft summary', when: { kind: 'cron', expression: '0 16 * * MON-FRI', timeZone: 'America/Los_Angeles' } });
+          await call('change_scheduled_item', { id: summary.id, instruction: 'Send weekday summary', when: { kind: 'cron', expression: '0 17 * * MON-FRI', timeZone: 'America/Los_Angeles' } });
+          const ticket = await call('schedule_item', { instruction: 'Check ticket', when: { kind: 'at', at: '2020-06-15T15:10:00Z' } });
+          await call('cancel_scheduled_item', { id: ticket.id });
+          const list = await call('list_scheduled_items', {});
+          message = JSON.stringify({ check, summary, items: list.items });
         }
       }
       if (mode() === 'reporting') {

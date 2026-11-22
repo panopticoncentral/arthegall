@@ -1,73 +1,114 @@
 /// <reference lib="esnext.temporal" />
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { zone } from '../../../packages/contracts/src/reporting.js';
-import { Conflict, type Reporting } from './reporting.js';
+import { CronExpressionParser } from 'cron-parser';
+import type { ScheduleOperation, ScheduleTiming } from '../../../packages/contracts/src/scheduling.js';
+import { Conflict } from './reporting.js';
 
-// Temporal's compatible disambiguation chooses the earlier repeated time and
-// shifts a nonexistent time forward by the size of the spring gap.
-export function dueAt(date: Temporal.PlainDate, time: string) {
-  return date.toZonedDateTime({ timeZone: zone, plainTime: time }).epochMilliseconds;
+
+type Item = { id: string; assignment_id: string; instruction: string; timing: string; next_due: number | null; backfill: number };
+type Queued = Item & { conversation_id: string; due_at: number };
+
+function nextCron(when: Extract<ScheduleTiming, { kind: 'cron' }>, from: number, id: string) {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: when.timeZone });
+    if (!when.expression.startsWith('@') && ![5, 6].includes(when.expression.split(/\s+/).length)) throw new Error();
+    return CronExpressionParser.parse(when.expression, { currentDate: new Date(from), tz: when.timeZone, hashSeed: id }).next().getTime();
+  } catch { throw new Conflict('Choose a valid cron expression with a future occurrence and an IANA time zone'); }
+}
+function firstDue(when: ScheduleTiming, now: number, id: string) {
+  if (when.kind === 'cron') return nextCron(when, now, id);
+  const due = when.kind === 'after' ? now + when.seconds * 1000 : Date.parse(when.at);
+  if (!Number.isFinite(new Date(due).getTime()) || due <= now || new Date(due).getUTCFullYear() > 9999) throw new Conflict('Choose a future time');
+  return due;
 }
 
-type Schedule = { id: string; assignment_id: string; runner_id: string; time: string; backfill: number; state: string; next_date: string };
 export class Scheduler {
-  constructor(private db: Database.Database, private reporting: Reporting, private now: () => Date) {}
+  constructor(private db: Database.Database, private now: () => Date) {}
 
-  propose(assignment: string, runner: string, time: string, backfill: boolean, source: string | { sessionId: string }) {
-    const proposals = this.db.prepare("SELECT * FROM report_schedules WHERE assignment_id=? AND state IN ('pending','active')").all(assignment) as Schedule[];
-    const matching = proposals.find(s => s.time === time && Boolean(s.backfill) === backfill && s.runner_id === runner);
-    if (matching?.state === 'pending') return false;
-    this.db.prepare("UPDATE report_schedules SET state='retired' WHERE assignment_id=? AND state='pending'").run(assignment);
-    if (matching) return true;
-    const id = randomUUID();
-    this.db.prepare(`INSERT INTO report_schedules(id,assignment_id,runner_id,time,backfill,source_run,proposed_by,state)
-      VALUES (?,?,?,?,?,?,?,'pending')`).run(id, assignment, runner, time, Number(backfill),
-        typeof source === 'string' ? source : null, typeof source === 'string' ? null : source.sessionId);
-    this.reporting.event('schedule_proposed', { id, assignment, runner, time, backfill, source });
-    return false;
+  // Called inside the authorized operation's receipt transaction.
+  operate(assignment: string, runner: string, op: ScheduleOperation) {
+    if (op.tool === 'list_scheduled_items') {
+      const rows = this.db.prepare(`SELECT * FROM scheduled_items WHERE assignment_id=? AND state='active'
+        AND id>? ORDER BY id LIMIT 21`).all(assignment, op.args.afterId ?? '') as Item[];
+      const items = rows.slice(0,20).map(row => ({ id: row.id, instruction: row.instruction, when: JSON.parse(row.timing) as ScheduleTiming,
+        missed: row.backfill ? 'all' as const : 'latest' as const, nextDue: row.next_due === null ? null : new Date(row.next_due).toISOString() }));
+      return { items, nextAfterId: rows.length > items.length ? items.at(-1)!.id : null };
+    }
+    if (op.tool !== 'schedule_item') {
+      if (!this.db.prepare(`SELECT 1 FROM scheduled_items WHERE id=? AND assignment_id=? AND state='active'`)
+        .get(op.args.id, assignment)) throw new Conflict('Unknown active scheduled item for this assignment');
+      if (op.tool === 'cancel_scheduled_item') {
+        this.db.prepare("UPDATE scheduled_items SET state='cancelled',next_due=NULL WHERE id=?").run(op.args.id);
+        return { id: op.args.id, nextDue: null };
+      }
+    }
+    const id = op.tool === 'schedule_item' ? randomUUID() : op.args.id;
+    const { instruction, when, missed } = op.args;
+    const due = firstDue(when, this.now().getTime(), id);
+    if (op.tool === 'schedule_item') {
+      this.db.prepare("INSERT INTO scheduled_items VALUES (?,?,?,?,?,?,?,'active')")
+        .run(id, assignment, runner, instruction, JSON.stringify(when), Number(missed === 'all'), due);
+    } else {
+      this.db.prepare("UPDATE scheduled_occurrences SET state='cancelled' WHERE item_id=? AND state='queued'").run(id);
+      this.db.prepare('UPDATE scheduled_items SET timing=?,instruction=?,backfill=?,next_due=? WHERE id=?')
+        .run(JSON.stringify(when), instruction, Number(missed === 'all'), due, id);
+    }
+    return { id, nextDue: new Date(due).toISOString() };
   }
 
-  decide(id: string, session: string, allow: boolean) {
+  // The server clock owns this durable queue. No runner connection is needed.
+  tick() {
+    const now = this.now().getTime();
     this.db.transaction(() => {
-      const schedule = this.db.prepare('SELECT * FROM report_schedules WHERE id=?').get(id) as Schedule | undefined;
-      if (!schedule) throw new Conflict('Unknown schedule');
-      const state = allow ? 'active' : 'declined';
-      if (schedule.state === state) return;
-      if (schedule.state !== 'pending') throw new Conflict('Schedule proposal is no longer pending');
-      const now = this.now().getTime();
-      let date = Temporal.Instant.fromEpochMilliseconds(now).toZonedDateTimeISO(zone).toPlainDate();
-      if (dueAt(date, schedule.time) < now) date = date.add({ days: 1 });
-      if (allow) this.db.prepare("UPDATE report_schedules SET state='retired' WHERE assignment_id=? AND state='active'").run(schedule.assignment_id);
-      this.db.prepare('UPDATE report_schedules SET state=?,session_id=?,next_date=?,next_due=? WHERE id=?')
-        .run(state, session, date.toString(), dueAt(date, schedule.time), id);
-      this.reporting.event('schedule_decided', { id, state, session });
+      const due = this.db.prepare(`SELECT * FROM scheduled_items WHERE state='active' AND next_due<=?
+        ORDER BY next_due,id LIMIT 64`).all(now) as Item[];
+      for (const item of due) this.fire(item, now);
     })();
   }
 
-  // Called inside nextDispatch's transaction when a connected runner can take work.
-  // A null run is a recorded skip. Backfill yields one dispatch at a time.
-  materialize(runner: string, enqueue: (conversation: string, period: string) => string) {
-    const now = this.now().getTime();
-    const schedule = this.db.prepare(`SELECT s.*, a.conversation_id FROM report_schedules s JOIN assignments a ON a.id=s.assignment_id
-      WHERE state='active' AND runner_id=? AND next_due<=? ORDER BY next_due LIMIT 1`).get(runner, now) as Schedule & { conversation_id: string } | undefined;
-    if (!schedule) return;
-    let date = Temporal.PlainDate.from(schedule.next_date);
-    let due = dueAt(date, schedule.time);
-    while (due <= now) {
-      const next = date.add({ days: 1 }), nextDue = dueAt(next, schedule.time);
-      const period = date.subtract({ days: 1 }).toString();
-      const exists = this.db.prepare('SELECT 1 FROM report_occurrences WHERE assignment_id=? AND due_date=?').get(schedule.assignment_id, date.toString());
-      if (!exists) {
-        const shouldRun = Boolean(schedule.backfill) || nextDue > now;
-        const run = shouldRun ? enqueue(schedule.conversation_id, period) : null;
-        this.db.prepare('INSERT INTO report_occurrences(assignment_id,due_date,due_at,period,schedule_id,run_id) VALUES (?,?,?,?,?,?)')
-          .run(schedule.assignment_id, date.toString(), due, period, schedule.id, run);
-        this.reporting.event(run ? 'occurrence_queued' : 'occurrence_missed', { scheduleId: schedule.id, dueDate: date.toString(), period, run });
-      }
-      date = next; due = nextDue;
-      if (schedule.backfill && !exists) break;
+  private fire(item: Item, now: number) {
+    const when = JSON.parse(item.timing) as ScheduleTiming;
+    let due = item.next_due!;
+    // Bound catch-up per item per tick so a long outage cannot monopolize the server.
+    for (let count = 0; count < 32 && due <= now; count++) {
+      let next: number | null = null;
+      if (when.kind === 'cron') next = nextCron(when, due, item.id);
+      const state = !item.backfill && next !== null && next <= now ? 'skipped' : 'queued';
+      if (!item.backfill) this.db.prepare("UPDATE scheduled_occurrences SET state='skipped' WHERE item_id=? AND due_at<? AND state='queued'").run(item.id, due);
+      this.db.prepare('INSERT INTO scheduled_occurrences(item_id,due_at,state) VALUES (?,?,?) ON CONFLICT(item_id,due_at) DO NOTHING').run(item.id, due, state);
+      this.db.prepare('UPDATE scheduled_items SET next_due=? WHERE id=?').run(next, item.id);
+      if (next === null) break;
+      due = next;
     }
-    this.db.prepare('UPDATE report_schedules SET next_date=?,next_due=? WHERE id=?').run(date.toString(), due, schedule.id);
+  }
+
+  // Reconstruct only an occurrence authorized by the schedule in the restored snapshot.
+  recoverPending(id: string, assignment: string, runner: string, due: number) {
+    const query = this.db.prepare("SELECT * FROM scheduled_items WHERE id=? AND assignment_id=? AND runner_id=? AND state='active'");
+    let item = query.get(id, assignment, runner) as Item | undefined;
+    if (!item) throw new Conflict('Scheduled item is absent or inactive in the snapshot');
+    while (item.next_due !== null && item.next_due <= due) {
+      if (item.backfill && item.next_due < due) throw new Conflict('Earlier scheduled work is missing from the runner journal');
+      this.fire(item, due);
+      item = query.get(id, assignment, runner) as Item;
+    }
+    const queued = this.db.prepare("SELECT due_at FROM scheduled_occurrences WHERE item_id=? AND state='queued' ORDER BY due_at LIMIT 1").pluck().get(id);
+    if (queued !== due) throw new Conflict('Runner occurrence conflicts with the restored schedule');
+    return item;
+  }
+
+  // Claim and enqueue the run in the same transaction as dispatch selection.
+  dispatch(runner: string, enqueue: (item: Queued) => string | undefined) {
+    const item = this.db.prepare(`SELECT i.*,o.due_at,a.conversation_id FROM scheduled_occurrences o
+      JOIN scheduled_items i ON i.id=o.item_id JOIN assignments a ON a.id=i.assignment_id
+      WHERE o.state='queued' AND i.state='active' AND i.runner_id=?
+      AND (i.backfill=1 OR i.next_due IS NULL OR i.next_due>?) ORDER BY o.due_at,i.id LIMIT 1`).get(runner, this.now().getTime()) as Queued | undefined;
+    if (!item) return;
+    const run = enqueue(item);
+    this.db.prepare('UPDATE scheduled_occurrences SET state=?,run_id=? WHERE item_id=? AND due_at=?')
+      .run(run ? 'dispatched' : 'skipped', run ?? null, item.id, item.due_at);
+    if (item.next_due === null) this.db.prepare("UPDATE scheduled_items SET state='completed' WHERE id=?").run(item.id);
+    return run;
   }
 }

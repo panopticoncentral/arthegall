@@ -5,9 +5,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { ExecutionContext, Outcome } from '../../../packages/contracts/src/index.js';
 
-import { CreateAssignment, DateRange, Definition, ScheduleRequest, ReportRequest, type AdminOperation, type UsageReport } from '../../../packages/contracts/src/reporting.js';
+import { CreateAssignment, DateRange, Definition, ReportRequest, type AdminOperation, type UsageReport } from '../../../packages/contracts/src/reporting.js';
 
-type Capabilities = {
+import { ScheduleItem, ChangeItem, ItemId, ListItems, type ScheduleOperation } from '../../../packages/contracts/src/scheduling.js';
+
+export type Capabilities = {
+  schedule?: (operation: ScheduleOperation) => Promise<unknown>;
   admin?: (operation: AdminOperation) => Promise<unknown>;
   usage?: (range: DateRange) => Promise<UsageReport>;
 };
@@ -45,6 +48,17 @@ export async function startToolService() {
       inputSchema: z.strictObject({}),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     }, async () => { valid(); return content(binding.context); });
+    if (binding.schedule) {
+      const invoke = (op: ScheduleOperation) => { valid(); return binding.schedule!(op).then(content); };
+      mcp.registerTool('schedule_item', { inputSchema: ScheduleItem, description: 'Schedule an instruction in your current assignment. Use at with an offset, after in seconds, or cron with an IANA time zone. Missed recurring work defaults to latest.' },
+        args => invoke({ tool: 'schedule_item', args }));
+      mcp.registerTool('change_scheduled_item', { inputSchema: ChangeItem, description: 'Replace the instruction and timing for one active item in your assignment, including pending occurrences.' },
+        args => invoke({ tool: 'change_scheduled_item', args }));
+      mcp.registerTool('cancel_scheduled_item', { inputSchema: ItemId, description: 'Cancel one item and its pending occurrences in your assignment.' },
+        args => invoke({ tool: 'cancel_scheduled_item', args }));
+      mcp.registerTool('list_scheduled_items', { inputSchema: ListItems, description: 'List active follow-ups in your assignment. Pass nextAfterId as afterId for the next page.' },
+        args => invoke({ tool: 'list_scheduled_items', args }));
+    }
     if (binding.context.administrator && binding.admin) {
       const annotations = { destructiveHint: false, openWorldHint: false, idempotentHint: true };
       mcp.registerTool('create_reporting_assignment', { inputSchema: CreateAssignment, annotations,
@@ -52,18 +66,15 @@ export async function startToolService() {
       async (args) => { valid(); return content(await binding.admin!({ tool: 'create_reporting_assignment', args })); });
       mcp.registerTool('revise_reporting_agent', { inputSchema: Definition, annotations, description: 'Revise the named reporting agent instructions. Authority stays scoped to its approved assignment.' },
       async (args) => { valid(); return content(await binding.admin!({ tool: 'revise_reporting_agent', args })); });
-      mcp.registerTool('schedule_usage_report', { inputSchema: ScheduleRequest, annotations,
-        description: 'Propose a daily schedule for an existing reporting assignment. Use HH:mm Pacific time and enable backfill only on explicit request. The user must approve recurring access.' },
-      async (args) => { valid(); return content(await binding.admin!({ tool: 'schedule_usage_report', args })); });
       mcp.registerTool('run_usage_report', { inputSchema: ReportRequest, annotations,
         description: 'Queue a report in the named reporting agent DM. Range is inclusive, Pacific time. Omit for yesterday.' },
       async (args) => { valid(); return content(await binding.admin!({ tool: 'run_usage_report', args })); });
     }
-    if (binding.context.access && binding.context.range && binding.usage) {
-      mcp.registerTool('read_usage', { inputSchema: DateRange, description: 'Read aggregate usage for the exact inclusive date range in your dispatch.',
+    if (binding.context.access && (binding.context.range || binding.context.scheduledItem) && binding.usage) {
+      mcp.registerTool('read_usage', { inputSchema: DateRange, description: 'Read aggregate usage for the requested inclusive period. For a scheduled instruction, determine the period from its original due time.',
         annotations: { readOnlyHint: true, openWorldHint: false } }, async (range) => {
         valid();
-        if (range.start !== binding.context.range!.start || range.end !== binding.context.range!.end) throw new Error('Outside requested report period');
+        if (binding.context.range && (range.start !== binding.context.range.start || range.end !== binding.context.range.end)) throw new Error('Outside requested report period');
         return content(await binding.usage!(range));
       });
     }

@@ -6,7 +6,7 @@ import { BackupSettings, RetentionDays, RunActivityPage, RunnerFrame, Snapshot }
 import type { DailyBackups } from '../../../scripts/daily-backups.js';
 import type { Scan } from './restore-recovery.js';
 import { Conflict, ServerStore } from './store.js';
-import { EditDefinition, ReportingSettings, ScheduleRequest } from '../../../packages/contracts/src/reporting.js';
+import { EditDefinition, ReportingSettings } from '../../../packages/contracts/src/reporting.js';
 
 export async function createServer(store: ServerStore, origin: string, backups?: DailyBackups) {
   const expected = new URL(origin);
@@ -54,6 +54,13 @@ export async function createServer(store: ServerStore, origin: string, backups?:
   const timer = setInterval(() => {
     try { tick(); } catch { for (const socket of runners.keys()) socket.close(1011, 'Storage unavailable'); }
   }, 500);
+  const runScheduler = () => {
+    if (!store.recovery.paused()) store.scheduler.tick();
+  };
+  const scheduleTimer = setInterval(() => {
+    try { runScheduler(); } catch (error) { app.log.error({ err: error }, 'Schedule tick failed'); }
+  }, 500);
+  app.addHook('onReady', async () => { runScheduler(); });
   if (backups) {
     const timer = setInterval(() => { void backups.tick(); }, 30_000);
     app.addHook('onReady', async () => { void backups.tick(); });
@@ -62,6 +69,7 @@ export async function createServer(store: ServerStore, origin: string, backups?:
   app.addHook('preClose', async () => {
     clearInterval(timer);
     clearInterval(heartbeat);
+    clearInterval(scheduleTimer);
     const sockets = [...clients.keys(), ...runners.keys()];
     clients.clear(); runners.clear();
     for (const socket of sockets) socket.terminate();
@@ -163,24 +171,6 @@ export async function createServer(store: ServerStore, origin: string, backups?:
     })();
     return { saved: true };
   });
-  settingsPost('/conversations/:id/schedule', async request => {
-    const { id } = z.object({ id: z.uuid() }).parse(request.params);
-    const { time, activeId, backfill } = ScheduleRequest.pick({ time: true }).extend({ activeId: z.uuid().nullable(), backfill: z.boolean() }).parse(request.body);
-    store.db.transaction(() => {
-      const agent = store.reporting.assignment(id);
-      if (!agent.assignmentInstructions || agent.closed) throw new Conflict('Select an open reporting assignment');
-      const schedules = store.db.prepare("SELECT id,state,time,backfill FROM report_schedules WHERE assignment_id=? AND state IN ('active','pending')")
-        .all(agent.assignmentId) as { id: string; state: string; time: string; backfill: number }[];
-      const pending = schedules.find(s => s.state === 'pending');
-      const active = schedules.find(s => s.state === 'active');
-      if (pending?.time === time && Boolean(pending.backfill) === backfill) return;
-      if (!pending && active?.time === time && Boolean(active.backfill) === backfill) return;
-      if (pending || (active?.id ?? null) !== activeId) throw new Conflict('The schedule changed. Review the current schedule before proposing another change.');
-      const runnerId = store.db.prepare("SELECT value FROM metadata WHERE key='runner'").pluck().get() as string;
-      store.scheduler.propose(agent.assignmentId, runnerId, time, backfill, { sessionId: settingsSession(request) });
-    })();
-    return { saved: true };
-  });
   settingsPost('/retention', async request => {
     const { days } = z.strictObject({days: RetentionDays}).parse(request.body);
     store.retention.configure(days);
@@ -203,12 +193,6 @@ export async function createServer(store: ServerStore, origin: string, backups?:
   settingsPost('/conversations/:id/close', async (request) => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     store.reporting.closeAssignment(id, settingsSession(request));
-    return { saved: true };
-  });
-  settingsPost('/schedules/:id', async (request) => {
-    const { id } = z.object({ id: z.uuid() }).parse(request.params);
-    const { decision } = z.strictObject({ decision: z.enum(['accept','decline']) }).parse(request.body);
-    store.scheduler.decide(id, settingsSession(request), decision === 'accept');
     return { saved: true };
   });
   settingsPost('/access/:id', async (request) => {

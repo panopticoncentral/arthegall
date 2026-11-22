@@ -3,12 +3,12 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { z } from 'zod';
-import { Dispatch, Outcome, ServerFrame } from '../../../packages/contracts/src/index.js';
+import { Dispatch, Outcome, ServerFrame, type AgentOperation } from '../../../packages/contracts/src/index.js';
 import { CodexRpc } from './codex/rpc.js';
 import { launchArgs, providerEnvironment, threadConfig } from './codex/config.js';
-import { startToolService } from './mcp.js';
+import { startToolService, type Capabilities } from './mcp.js';
 import { readUsage } from './usage.js';
-import type { UsageReport, DateRange, AdminOperation } from '../../../packages/contracts/src/reporting.js';
+import type { UsageReport } from '../../../packages/contracts/src/reporting.js';
 import { RunnerStore } from './store.js';
 
 export type RunnerOptions = { runnerId: string; token: string; serverUrl: string; workspaceRoot: string; codex?: string; usageRoots?: { codex: string; claude: string }; fake?: boolean; approvalExercise?: boolean; rpcFactory?: (workspace: string, profile: string) => CodexRpc };
@@ -98,7 +98,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
   }
   function runDirectory(context: Dispatch['context']) {
     const assignment = join(options.workspaceRoot, context.assignmentId);
-    return context.occurrence ? join(assignment, 'runs', context.runId) : assignment;
+    return context.scheduledItem ? join(assignment, 'runs', context.runId) : assignment;
   }
   async function recover() {
     for (const run of store.interrupted()) {
@@ -154,11 +154,11 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         : `${context.instructions}\n${context.access ? "Use read_context. For a requested range call read_usage and present both sources, date range, coverage, subtotals and unknowns. For a follow-up use priorReport from read_context as the selected report. Follow the assignmentInstructions and current preference from read_context when writing reports. On a report reply, if the user gives ongoing guidance, set assignmentPreference in report_outcome to the updated complete set of presentation preferences, retaining other applicable preferences. For a question about this report omit assignmentPreference. Never estimate spend." : ""}\nRead context first. Reply to the latest user message. Call report_outcome exactly once with the full user-facing answer in message. A provider turn ending alone does not complete the assignment.`;
       if (exercise) store.publish(context.runId, { kind: 'activity', message: `Operator enabled a one-run synthetic approval exercise: ${command}. Scope: this assignment workspace; each native request requires an exact user decision.` });
       const tools: string[] = [];
-      const capabilities: { admin?: (op: AdminOperation) => Promise<unknown>; usage?: (range: DateRange) => Promise<UsageReport> } = {};
+      const capabilities: Capabilities = {};
       let evidence: Promise<UsageReport> | undefined;
-      if (context.administrator && !exercise) {
-        tools.push('create_reporting_assignment', 'revise_reporting_agent', 'run_usage_report', 'schedule_usage_report');
-        capabilities.admin = async (op) => {
+      if (!exercise) {
+        tools.push('schedule_item', 'change_scheduled_item', 'cancel_scheduled_item', 'list_scheduled_items');
+        const requestOperation = async (op: AgentOperation) => {
           const id = store.requestOperation(context.runId, op);
           const deadline = Date.now() + 10_000;
           while (!stopping && Date.now() < deadline && socket?.readyState === WebSocket.OPEN) {
@@ -168,13 +168,25 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
           }
           return { status: 'pending', message: 'Saved on the runner for delivery. Server acceptance is pending.' };
         };
+        capabilities.schedule = requestOperation;
+        if (context.administrator) {
+          tools.push('create_reporting_assignment', 'revise_reporting_agent', 'run_usage_report');
+          capabilities.admin = requestOperation;
+        }
       }
-      if (context.access && context.range) {
+      if (context.access && (context.range || context.scheduledItem)) {
         tools.push('read_usage');
-        capabilities.usage = (range) => evidence ??= readUsage(range, options.usageRoots).then((report) => {
-          store.publish(context.runId, { kind: 'usage', report });
-          return report;
-        }).catch((error) => { evidence = undefined; throw error; });
+        capabilities.usage = async (range) => {
+          if (evidence) {
+            const saved = await evidence;
+            if (saved.range.start !== range.start || saved.range.end !== range.end) throw new Error('This run has already recorded another period');
+            return saved;
+          }
+          return evidence = readUsage(range, options.usageRoots).then((report) => {
+            store.publish(context.runId, { kind: 'usage', report });
+            return report;
+          }).catch((error) => { evidence = undefined; throw error; });
+        };
       }
       const binding = service.bind(context, async (outcome) => {
         if (context.range && outcome.status === 'completed') {
@@ -188,8 +200,10 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         cwd: workspace, runtimeWorkspaceRoots: [workspace], permissions: connection.permissionProfile, approvalPolicy, approvalsReviewer: 'user',
         model: connection.model.model, config: { ...threadConfig(connection.inherited, service.url, binding.token, tools), 'features.shell_tool': Boolean(exercise) },
         baseInstructions: 'You are an Arthegall agent. Use the runner MCP tools for context and explicit outcomes. Never spawn agents or use tools outside your grant.',
-        developerInstructions: [instructions, context.administrator && !exercise
-          ? 'Direct the user to the approval in the reporting agent’s DM in Arthegall.app. The installed Mac app handles reporting access and schedule decisions. Follow this guidance for approvals regardless of any older client instructions.' : null,
+        developerInstructions: [instructions, context.scheduledItem
+          ? 'This is a scheduled follow-up. Use the instruction in the latest message, the original due time in read_context, and the existing assignment permissions. When asked for a usage report, calculate its date range relative to the due time in America/Los_Angeles and call read_usage before reporting totals.' : null,
+          context.administrator && !exercise
+          ? 'Direct the user to the approval in the reporting agent’s DM in Arthegall.app. The installed Mac app handles reporting access. Each agent manages scheduled items in its own assignment. Follow this guidance for approvals regardless of any older client instructions.' : null,
           `This run provides the following Arthegall tools: ${['read_context', 'report_outcome', ...tools].join(', ')}. Use the current tools and instructions when acting on requests in this conversation.`].filter(Boolean).join('\n'),
       };
       // A resumed Codex thread retains earlier instructions and tool history.
@@ -198,10 +212,10 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         agentId: context.agentId, revision: context.definitionVersion, instructions: params.developerInstructions,
         base: params.baseInstructions, tools, approvalPolicy,
       })).digest('hex');
-      const saved = exercise || context.occurrence ? undefined : store.session(context.assignmentId);
+      const saved = exercise || context.scheduledItem ? undefined : store.session(context.assignmentId);
       const priorThread = saved?.thread_configuration === configuration ? saved.thread_id : undefined;
       const thread = z.object({ thread: z.object({ id: z.string() }), model: z.string() }).parse(await connection.rpc.request(priorThread ? 'thread/resume' : 'thread/start', priorThread ? { ...params, threadId: priorThread, excludeTurns: true } : params));
-      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort, exercise || context.occurrence ? undefined : configuration);
+      store.mapThread(context.runId, context.assignmentId, thread.thread.id, thread.model, connection.model.defaultReasoningEffort, exercise || context.scheduledItem ? undefined : configuration);
       if (saved && !priorThread) store.publish(context.runId, { kind: 'activity', message: 'Started a new Codex thread with current instructions and tools. Conversation history is available through read_context.' });
       store.publish(context.runId, { kind: 'activity', message: `Codex ${thread.model}; effort ${connection.model.defaultReasoningEffort}; definition ${context.definitionVersion}.` });
       let text = '', savedText = '';

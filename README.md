@@ -2,7 +2,9 @@
 
 A control plane for persistent agents and assignments, with conversations at the center and provider sessions managed by runners.
 
-The administrator can create a Codex reporting agent, request scoped access to the local runner and usage tool, and queue an on-demand report. A separate approval in the Mac app enables daily Pacific reports with catch-up or explicit backfill. The reporter delivers results to its own DM and can answer follow-ups about a selected report. The owner has confirmed pairing and use from a second device over private HTTPS.
+The administrator can create a Codex reporting agent, request scoped access to the local runner and usage tool, and queue an on-demand report. The Mac app grants usage access for one run or for the assignment. Ask the reporter directly to schedule future work. The reporter delivers results to its own DM and can answer follow-ups about a selected report. The owner has confirmed pairing and use from a second device over private HTTPS.
+
+Agents can schedule follow-ups within an assignment. For example, ask “Check this again in five minutes” or “Send me a summary every weekday at 5 PM Pacific.” Each item can be changed or cancelled individually. The server keeps time while the runner is offline.
 
 See [daily reports and preferences](docs/milestone-3.md), [reporting and coverage](docs/milestone-2.md), [macOS installation](docs/macos-installation.md), [design](docs/design.md), [architecture](docs/architecture.md), and [milestone 1 verification](docs/milestone-1-progress.md).
 

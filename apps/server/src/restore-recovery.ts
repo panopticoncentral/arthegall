@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import { Dispatch, type InventoryItem } from '../../../packages/contracts/src/index.js';
 import type { ServerStore } from './store.js';
 import { Conflict } from './reporting.js';
-import { dueAt } from './scheduler.js';
 
 type Execution = Extract<InventoryItem, { kind: 'execution' }>;
 export type Scan = { execution?: Execution; received: number; failed: boolean };
@@ -74,35 +73,27 @@ export class RestoreRecovery {
   }
   private restoreOccurrence(runner: string, dispatch: Dispatch) {
     const { context, reportMessages: ids } = dispatch;
-    const occurrence = context.occurrence;
-    if (!occurrence || !ids) throw new Conflict('Original dispatch or DM message identities are missing from the snapshot and runner record');
-    const schedule = this.db.prepare(`SELECT s.time,s.next_date,s.backfill FROM report_schedules s JOIN assignments a ON a.id=s.assignment_id
-      JOIN conversations c ON c.id=a.conversation_id JOIN reporting_assignments ra ON ra.assignment_id=a.id
-      WHERE s.id=? AND s.state='active' AND s.assignment_id=? AND s.runner_id=? AND a.conversation_id=? AND c.agent_id=? AND ra.closed=0`)
-      .get(occurrence.scheduleId, context.assignmentId, runner, ids.conversationId, context.agentId) as {time: string; next_date: string; backfill: number} | undefined;
-    if (!schedule || context.access?.approvalId !== occurrence.scheduleId || context.access.runnerId !== runner)
-      throw new Conflict('Recurring approval or original DM conflicts with the runner dispatch');
-    const date = Temporal.PlainDate.from(occurrence.dueDate), due = dueAt(date, schedule.time);
-    const period = date.subtract({ days: 1 }).toString();
-    if (Date.parse(occurrence.dueAt) !== due || context.range?.start !== period || context.range.end !== period ||
-        date.toString() < schedule.next_date || (schedule.backfill && schedule.next_date !== date.toString()))
-      throw new Conflict('Occurrence conflicts with the approved schedule cursor or report period');
+    const wake = context.scheduledItem;
+    if (!wake || !ids) throw new Conflict('Original dispatch or DM message identities are missing from the snapshot and runner record');
+    const due = Date.parse(wake.dueAt);
+    const item = this.store.scheduler.recoverPending(wake.id, context.assignmentId, runner, due);
+    const agent = this.store.reporting.assignment(ids.conversationId);
     const request = context.messages.at(-1);
-    if (!request || request.role !== 'user') throw new Conflict('Original report request missing');
+    if (agent.closed || agent.assignmentId !== context.assignmentId || agent.agentId !== context.agentId ||
+        request?.role !== 'user' || request.text !== item.instruction) throw new Conflict('Scheduled instruction or target changed');
     const message = this.db.prepare('INSERT INTO messages(id,conversation_id,author,text,state) VALUES (?,?,?,?,?)');
     message.run(ids.userId, ids.conversationId, 'user', request.text, 'complete');
     message.run(ids.assistantId, ids.conversationId, 'assistant', '', 'accepted');
     this.db.prepare("INSERT INTO runs(id,assignment_id,runner_id,user_message_id,assistant_message_id,state) VALUES (?,?,?,?,?,'accepted')")
       .run(context.runId, context.assignmentId, runner, ids.userId, ids.assistantId);
-    this.db.prepare('INSERT INTO dispatches VALUES (?,?,?,1)').run(dispatch.dispatchId, context.runId, JSON.stringify(dispatch));
-    this.db.prepare('INSERT INTO report_context(run_id,requested_range) VALUES (?,?)').run(context.runId, JSON.stringify(context.range));
-    const insert = this.db.prepare('INSERT INTO report_occurrences VALUES (?,?,?,?,?,?)');
-    for (let day = Temporal.PlainDate.from(schedule.next_date); Temporal.PlainDate.compare(day,date) < 0; day = day.add({ days: 1 })) {
-      insert.run(context.assignmentId, day.toString(), dueAt(day,schedule.time), day.subtract({ days: 1 }).toString(), occurrence.scheduleId, null);
-    }
-    insert.run(context.assignmentId, occurrence.dueDate, due, period, occurrence.scheduleId, context.runId);
-    const next = date.add({ days: 1 });
-    this.db.prepare('UPDATE report_schedules SET next_date=?,next_due=? WHERE id=?').run(next.toString(), dueAt(next,schedule.time), occurrence.scheduleId);
+    this.db.prepare('INSERT INTO dispatches(id,run_id) VALUES (?,?)').run(dispatch.dispatchId, context.runId);
+    if (!context.administrator) this.db.prepare('INSERT INTO report_context(run_id) VALUES (?)').run(context.runId);
+    this.db.prepare("UPDATE scheduled_occurrences SET state='dispatched',run_id=? WHERE item_id=? AND due_at=?")
+      .run(context.runId, wake.id, due);
+    if (item.next_due === null) this.db.prepare("UPDATE scheduled_items SET state='completed' WHERE id=?").run(wake.id);
+    const row = this.db.prepare('SELECT * FROM runs WHERE id=?').get(context.runId);
+    const expected = this.store.prepareDispatch(runner, row);
+    if (JSON.stringify(expected) !== JSON.stringify(dispatch)) throw new Conflict('Restored assignment permissions or instructions differ from the dispatched run');
   }
   private delivery(runner: string, item: Extract<InventoryItem,{ kind: 'delivery' }>) {
     const { delivery, decision } = item;

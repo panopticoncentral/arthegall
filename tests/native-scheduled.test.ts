@@ -31,20 +31,17 @@ for (const live of [false, true]) test(`${live ? 'Live Codex' : 'Synthetic'} sch
   const work = join(root, 'work');
   const runner = await startRunner(local, { token: old.runnerToken, runnerId: old.ids.runner, serverUrl: origin, workspaceRoot: work, usageRoots: old.roots,
     ...(!live ? { rpcFactory: (workspace: string) => new CodexRpc(process.execPath, [resolve('dist/tests/fixtures/provider.js'), root], workspace) } : {}) });
-  const completed = () => store.db.prepare(`SELECT o.due_date,o.period,r.id,m.id AS message,m.text,c.evidence,d.payload FROM report_occurrences o
+  const completed = () => store.db.prepare(`SELECT date(o.due_at/1000,'unixepoch') AS due_date,json_extract(c.evidence,'$.range.start') AS period,r.id,m.id AS message,m.text,c.evidence,d.payload FROM scheduled_occurrences o
     JOIN runs r ON r.id=o.run_id JOIN report_context c ON c.run_id=r.id JOIN dispatches d ON d.run_id=r.id JOIN messages m ON m.id=r.assistant_message_id
-    WHERE r.state='completed' AND m.conversation_id=? ORDER BY o.due_date`).all(old.dm) as {
+    WHERE r.state='completed' AND m.conversation_id=? ORDER BY o.due_at`).all(old.dm) as {
       due_date: string; period: string; id: string; message: string; text: string; evidence: string; payload: string }[];
   try {
     const paired = await pairNative(origin, store.createPairingCode());
     const client = new NativeTestClient(origin, paired.token);
-    await client.send(old.ids.conversation, 'Schedule Rowan’s existing usage report every morning at 8:00 AM Pacific. Use the default catch-up policy.');
-    const schedule = await waitFor('recurring access request', async () => (await client.snapshot()).schedules.find(item => item.state === 'pending'), 90_000);
-    assert.equal(schedule.time, '08:00');
-    assert.equal(schedule.assignmentId, old.assignment);
-    assert.equal(schedule.runnerId, old.ids.runner);
-    await client.post('schedules/' + schedule.id, { decision: 'accept' });
-    assert.equal((await client.snapshot()).schedules[0]?.state, 'active');
+    await client.send(old.dm, 'Schedule a report of the previous Pacific calendar day’s usage every morning at 8:00 AM Pacific.');
+    const item = await waitFor('scheduled instruction', async () => (await client.snapshot()).schedules.find(item => item.conversationId === old.dm), 90_000);
+    assert.equal(item.when.kind, 'cron');
+    assert.equal(item.nextDue, Date.parse('2020-06-15T15:00:00Z'));
 
     // No event subscription or client request during delivery.
     clock = new Date('2020-06-15T15:00:00Z');

@@ -55,8 +55,9 @@ try {
 
   await openServer();
   store.reporting.event('activity', { runId: prior.run, message: 'Synthetic retained provider trace.' });
-  store.scheduler.propose(prior.assignment, prior.ids.runner, '08:00', false, prior.run);
-  store.scheduler.decide(store.snapshot().schedules[0].id, prior.session, true);
+  store.scheduler.operate(prior.assignment, prior.ids.runner, { tool: 'schedule_item', args: {
+    instruction: 'Report usage for the previous Pacific calendar day.', missed: 'latest',
+    when: { kind: 'cron', expression: '0 8 * * *', timeZone: 'America/Los_Angeles' } } });
   await openRunner(runnerPath);
   controller.listen(0, '127.0.0.1');
   await once(controller, 'listening');
@@ -80,7 +81,7 @@ try {
     FROM report_preferences p JOIN report_context c ON c.run_id=p.source_run
     JOIN command_receipts q ON q.run_id=p.source_run WHERE p.assignment_id=?`).get(prior.assignment);
   assert.deepEqual(command, { runId: report.runId, messageId: report.messageId });
-  assert.equal(store.db.prepare('SELECT count(*) FROM report_occurrences').pluck().get(), 1);
+  assert.equal(store.db.prepare('SELECT count(*) FROM scheduled_occurrences').pluck().get(), 1);
   assert.equal(store.snapshot().runs.find(run => run.id === prior.run).history, 'pruned');
   assert.equal(store.reporting.settings(prior.dm).instructions, 'Synthetic instructions from the second client.');
   console.log('Verified CLI restore, runner recheck and resume, history cleanup, preserved report and pin, and a reply to the original report ID.');
@@ -127,7 +128,7 @@ async function closeServices() {
 
 function completedReport() {
   return store.db.prepare(`SELECT r.id AS runId, m.id AS messageId, m.text, c.evidence, d.id AS dispatchId
-    FROM report_occurrences o JOIN runs r ON r.id=o.run_id JOIN messages m ON m.id=r.assistant_message_id
+    FROM scheduled_occurrences o JOIN runs r ON r.id=o.run_id JOIN messages m ON m.id=r.assistant_message_id
     JOIN report_context c ON c.run_id=r.id JOIN dispatches d ON d.run_id=r.id WHERE r.state='completed'`).get();
 }
 

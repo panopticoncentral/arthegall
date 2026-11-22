@@ -12,14 +12,9 @@ struct AgentSettings: View {
     @State private var reload = 0
     @State private var editing = false
     @State private var edit = DefinitionChange(revision: 0, instructions: "")
-    @State private var proposing = false
-    @State private var proposal = ScheduleChange(activeId: nil, time: "08:00", backfill: false)
     @State private var confirmClose = false
 
-    private var schedules: [ReportSchedule] { snapshot.schedules.filter { $0.conversationId == dm.id } }
-    private var active: ReportSchedule? { schedules.first { $0.state == "active" } }
-    private var pending: ReportSchedule? { schedules.first { $0.state == "pending" } }
-    private var assignmentName: String { schedules.isEmpty ? "Usage reporting assignment" : "Daily usage report" }
+    private var schedules: [ScheduledItem] { snapshot.schedules.filter { $0.conversationId == dm.id } }
     private var canChange: Bool { model.online && !model.savingSettings && snapshot.recovery == nil && dm.closed == 0 }
     private var canOpenDM: Bool { model.local.pending == nil || model.selected == dm.id }
 
@@ -32,7 +27,7 @@ struct AgentSettings: View {
                 }
                 Button("Open \(dm.name)’s DM") { openConversation(dm.id, nil) }.disabled(!canOpenDM)
             } header: {
-                Text(assignment ? assignmentName : dm.name).font(.title2)
+                Text(assignment ? "Usage reporting assignment" : dm.name).font(.title2)
             }
             if let loadError {
                 Text(verbatim: loadError).foregroundStyle(.red)
@@ -94,8 +89,8 @@ struct AgentSettings: View {
             LabeledContent("Execution preferences", value: "Codex · Runner default model and effort")
         }
         Section("Assignments") {
-            Button(assignmentName) { navigate(.assignment(dm.id)) }
-            Text(dm.closed != 0 ? "Closed" : active.map { "Daily at \($0.time) Pacific" } ?? "On demand")
+            Button("Usage reporting assignment") { navigate(.assignment(dm.id)) }
+            Text(dm.closed != 0 ? "Closed" : "Open")
         }
         Section("Tools and access") {
             accessSummary(details)
@@ -111,46 +106,25 @@ struct AgentSettings: View {
                 Button("View source reply") { openConversation(dm.id, preference.messageId) }.disabled(!canOpenDM)
             }
         }
-        Section("Schedule and delivery") {
-            if let active {
-                LabeledContent("Active schedule", value: "Daily at \(active.time) · America/Los_Angeles")
-                Text(missedRuns(active))
-            } else { Text(dm.closed == 0 ? "On demand" : "Assignment closed") }
-            if dm.closed == 0 && pending == nil {
-                if proposing {
-                    TextField("Daily time · Pacific (HH:mm)", text: $proposal.time)
-                    Toggle("Backfill every missed report", isOn: $proposal.backfill)
-                    HStack {
-                        Button("Review change") { save("schedule", proposal) }
-                            .disabled(!canChange || !validTime(proposal.time) ||
-                                      (active?.time == proposal.time && (active?.backfill == 1) == proposal.backfill))
-                        Button("Cancel") { proposing = false; model.settingsError = nil }
+        Section("Scheduled items") {
+            if schedules.isEmpty { Text("No scheduled items") }
+            ForEach(schedules) { item in
+                VStack(alignment: .leading) {
+                    Text(verbatim: item.instruction)
+                    if let expression = item.when.expression, let zone = item.when.timeZone {
+                        Text(verbatim: "\(expression) · \(zone)").foregroundStyle(.secondary)
+                        Text(item.backfill == 0 ? "Deliver the latest missed occurrence" : "Deliver every missed occurrence")
                     }
-                } else {
-                    Button(active == nil ? "Schedule daily reports" : "Change schedule") {
-                        proposing = true
-                        proposal = ScheduleChange(activeId: active?.id, time: active?.time ?? "08:00", backfill: active?.backfill == 1)
-                    }.disabled(!canChange)
+                    if let due = item.nextDue {
+                        Text("Next due \(Date(timeIntervalSince1970: due / 1000).formatted())")
+                    } else { Text("Queued") }
                 }
             }
         }
         Section("Tools and access") { accessSummary(details) }
-        if let pending {
-            Section("Recurring reporting access requested") {
-                Text("Allow \(pending.name) to use the local runner and read_usage every day at \(pending.time) America/Los_Angeles? Each report covers the previous Pacific calendar day.")
-                Text(missedRuns(pending))
-                Text("Access includes replies about saved evidence and lasts until the schedule is replaced or the assignment closes.")
-                scope(assignment: pending.assignmentId, runner: pending.runnerId)
-                HStack {
-                    Button("Allow recurring reports") { decideSchedule(pending, "accept") }
-                        .accessibilityHint("Allows \(pending.name) to read usage on this runner every day at \(pending.time) Pacific.")
-                    Button("Decline schedule") { decideSchedule(pending, "decline") }
-                }.disabled(!canChange)
-            }
-        }
         ForEach(snapshot.grants.filter { $0.conversationId == dm.id }) { grant in
             Section("Reporting access requested") {
-                Text("\(grant.name) requests the local runner and read_usage for on-demand reports. The tool reads local Codex and Claude activity and returns aggregate counts and coverage.")
+                Text("\(grant.name) requests the local runner and read_usage for usage reports. The tool reads local Codex and Claude activity and returns aggregate counts and coverage.")
                 if let assignment = grant.assignmentId, let runner = grant.runnerId {
                     scope(assignment: assignment, runner: runner)
                     Group {
@@ -173,8 +147,7 @@ struct AgentSettings: View {
             Text("Local runner · read_usage · " + (grant.duration == "assignment" ? "Until the assignment closes" :
                     grant.usedBy == nil ? "Next run only" : "Current run only"))
         }
-        if active != nil { Text("Local runner · read_usage · Each scheduled run and replies about its results") }
-        else if details.access.isEmpty { Text(dm.closed == 0 ? "No current grant." : "Access ended when this assignment closed.") }
+        if details.access.isEmpty { Text(dm.closed == 0 ? "No current grant." : "Access ended when this assignment closed.") }
     }
 
     private func scope(assignment: String, runner: String) -> some View {
@@ -184,26 +157,13 @@ struct AgentSettings: View {
         }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
     }
 
-    private func missedRuns(_ schedule: ReportSchedule) -> String {
-        schedule.backfill != 0 ? "Deliver every missed report." : "Deliver the latest report and record earlier missed dates."
-    }
-
-    private func validTime(_ time: String) -> Bool {
-        time.range(of: #"^([01][0-9]|2[0-3]):[0-5][0-9]$"#, options: .regularExpression) != nil
-    }
-
     private func save<Body: Encodable & Sendable>(_ action: String, _ body: Body) {
         Task {
             if await model.saveSetting("conversations/\(dm.id)/" + action, body) {
                 editing = false
-                proposing = false
             }
             reload += 1
         }
-    }
-
-    private func decideSchedule(_ schedule: ReportSchedule, _ decision: String) {
-        Task { await model.saveSetting("schedules/" + schedule.id, ["decision": decision]) }
     }
 
     private func decideAccess(_ grant: AccessRequest, _ decision: String, _ duration: String) {

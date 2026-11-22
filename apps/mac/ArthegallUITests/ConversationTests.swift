@@ -113,12 +113,7 @@ final class ConversationTests: XCTestCase {
         app.buttons["Save revision"].click()
         XCTAssertTrue(app.staticTexts["Lead with coverage."].firstMatch.waitForExistence(timeout: 5))
         app.buttons["Usage reporting assignment"].click()
-        app.buttons["Schedule daily reports"].click()
-        app.buttons["Review change"].click()
-        let allow = app.buttons["Allow recurring reports"]
-        XCTAssertTrue(allow.waitForExistence(timeout: 5))
-        allow.click()
-        XCTAssertTrue(app.buttons["Change schedule"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No scheduled items"].waitForExistence(timeout: 5))
         app.buttons["Back to conversation"].click()
         XCTAssertTrue(app.staticTexts["Usage by provider"].waitForExistence(timeout: 5))
     }

@@ -24,7 +24,7 @@ Use a native split view for DMs, with a selected conversation and per-conversati
 
 Implement one-time command decisions, reporting access for a run or assignment, and recurring schedule decisions. Show the actual operation or the agent, runner, tool, duration, and schedule as appropriate. Show the active and proposed schedules together when one replaces another. Refresh a request that was resolved by another client. Surface queued work, runner disconnection, provider sign-in, and uncertain execution as distinct states.
 
-**Acceptance.** Starting in the Mac app, create a reporting agent, grant access, obtain an on-demand report, and approve a daily schedule. Quit the app before delivery. Reopen, read the scheduled result, inspect coverage, and reply to that report to change a preference. Verify that the next report uses the preference and retains its own evidence. Exercise decline and stale-decision paths with a second paired client. The [reporting](../tests/native-reporting.test.ts) and [scheduling](../tests/native-scheduled.test.ts) API tests and the [Mac window tests](mac-client.md#verification) exercise these behaviors.
+**Acceptance.** Starting in the Mac app, create a reporting agent, grant access, obtain an on-demand report, and ask the reporter to schedule a daily report. Quit the app before delivery. Reopen, read the scheduled result, inspect coverage, and reply to that report to change a preference. Verify that the next report uses the preference and retains its own evidence. The [reporting](../tests/native-reporting.test.ts) and [scheduling](../tests/native-scheduled.test.ts) API tests and the [Mac window tests](mac-client.md#verification) exercise these behaviors.
 
 ## 3. Bring over Settings and recovery
 

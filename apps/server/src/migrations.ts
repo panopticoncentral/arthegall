@@ -1,4 +1,4 @@
-import { historicalAdministratorInstructions, onDemandAdministratorInstructions } from './reporting.js';
+import { administratorInstructions, historicalAdministratorInstructions, onDemandAdministratorInstructions } from './reporting.js';
 
 export const migrations = [{ version: 1, sql: `
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -90,4 +90,60 @@ CREATE INDEX receipts_by_run ON delivery_receipts(runner_id,json_extract(payload
 ALTER TABLE report_schedules ALTER COLUMN source_run DROP NOT NULL;
 ALTER TABLE report_schedules ADD COLUMN proposed_by TEXT REFERENCES browser_sessions(id)
   CHECK ((source_run IS NULL) != (proposed_by IS NULL));
+` }, { version: 7, sql: `
+CREATE TABLE scheduled_items (
+  id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL REFERENCES assignments(id), runner_id TEXT NOT NULL REFERENCES runners(id),
+  instruction TEXT NOT NULL, timing TEXT NOT NULL, backfill INTEGER NOT NULL, next_due INTEGER,
+  state TEXT NOT NULL CHECK(state IN ('active','completed','cancelled')), report_id TEXT UNIQUE REFERENCES report_schedules(id));
+CREATE INDEX scheduled_items_due ON scheduled_items(next_due) WHERE state='active';
+CREATE TABLE scheduled_occurrences (
+  item_id TEXT NOT NULL REFERENCES scheduled_items(id), due_at INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('queued','skipped','dispatched','cancelled')), run_id TEXT UNIQUE REFERENCES runs(id),
+  PRIMARY KEY(item_id,due_at));
+CREATE INDEX scheduled_item_queue ON scheduled_occurrences(item_id,due_at) WHERE state='queued';
+CREATE INDEX scheduled_queue ON scheduled_occurrences(due_at,item_id) WHERE state='queued';
+INSERT INTO scheduled_items
+  SELECT id,assignment_id,runner_id,'Scheduled usage report',json_object('kind','daily','time',time,'timeZone','America/Los_Angeles'),
+    backfill,next_due,'active',id FROM report_schedules WHERE state='active';
+CREATE TRIGGER close_scheduled_items AFTER UPDATE OF closed ON reporting_assignments WHEN NEW.closed=1 BEGIN
+  UPDATE scheduled_items SET state='cancelled',next_due=NULL WHERE assignment_id=NEW.assignment_id AND state='active';
+END;
+CREATE TRIGGER cancel_scheduled_occurrences AFTER UPDATE OF state ON scheduled_items WHEN NEW.state='cancelled' BEGIN
+  UPDATE scheduled_occurrences SET state='cancelled' WHERE item_id=NEW.id AND state='queued';
+END;
+` }, { version: 8, sql: `
+DROP TRIGGER close_scheduled_items;
+DROP TRIGGER cancel_scheduled_occurrences;
+DROP INDEX scheduled_items_due;
+DROP INDEX scheduled_item_queue;
+DROP INDEX scheduled_queue;
+ALTER TABLE scheduled_occurrences RENAME TO previous_occurrences;
+ALTER TABLE scheduled_items RENAME TO previous_items;
+CREATE TABLE scheduled_items (
+  id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL REFERENCES assignments(id), runner_id TEXT NOT NULL REFERENCES runners(id),
+  instruction TEXT NOT NULL, timing TEXT NOT NULL, backfill INTEGER NOT NULL, next_due INTEGER,
+  state TEXT NOT NULL CHECK(state IN ('active','completed','cancelled')));
+CREATE INDEX scheduled_items_due ON scheduled_items(next_due) WHERE state='active';
+CREATE TABLE scheduled_occurrences (
+  item_id TEXT NOT NULL REFERENCES scheduled_items(id), due_at INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('queued','skipped','dispatched','cancelled')), run_id TEXT UNIQUE REFERENCES runs(id),
+  PRIMARY KEY(item_id,due_at));
+CREATE INDEX scheduled_item_queue ON scheduled_occurrences(item_id,due_at) WHERE state='queued';
+CREATE INDEX scheduled_queue ON scheduled_occurrences(due_at,item_id) WHERE state='queued';
+INSERT INTO scheduled_items SELECT id,assignment_id,runner_id,instruction,timing,backfill,next_due,state
+  FROM previous_items WHERE report_id IS NULL;
+INSERT INTO scheduled_occurrences SELECT o.* FROM previous_occurrences o JOIN scheduled_items i ON i.id=o.item_id;
+DROP TABLE previous_occurrences;
+DROP TABLE previous_items;
+DROP TABLE report_occurrences;
+DROP TABLE report_schedules;
+UPDATE agents SET revision=revision+1,instructions='${administratorInstructions.replaceAll("'", "''")}'
+  WHERE id=(SELECT value FROM metadata WHERE key='administrator') AND instr(instructions,'schedule_usage_report')>0;
+INSERT OR IGNORE INTO definition_history SELECT id,revision,instructions,NULL FROM agents;
+CREATE TRIGGER close_scheduled_items AFTER UPDATE OF closed ON reporting_assignments WHEN NEW.closed=1 BEGIN
+  UPDATE scheduled_items SET state='cancelled',next_due=NULL WHERE assignment_id=NEW.assignment_id AND state='active';
+END;
+CREATE TRIGGER cancel_scheduled_occurrences AFTER UPDATE OF state ON scheduled_items WHEN NEW.state='cancelled' BEGIN
+  UPDATE scheduled_occurrences SET state='cancelled' WHERE item_id=NEW.id AND state='queued';
+END;
 ` }];

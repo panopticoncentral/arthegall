@@ -39,14 +39,10 @@ export const ReportingSettings = z.object({
 export type ReportingSettings = z.infer<typeof ReportingSettings>;
 export const CreateAssignment = Definition.extend({ assignment: z.string().trim().min(1).max(2000).optional() });
 export const ReportRequest = z.strictObject({ name, range: DateRange.optional() });
-export const ScheduleRequest = z.strictObject({
-  name, time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), backfill: z.boolean().optional(),
-});
 export const Preference = z.string().trim().min(1).max(2000);
 export const AdminOperation = z.discriminatedUnion('tool', [
   z.strictObject({ tool: z.literal('create_reporting_assignment'), args: CreateAssignment }),
   z.strictObject({ tool: z.literal('revise_reporting_agent'), args: Definition }),
-  z.strictObject({ tool: z.literal('schedule_usage_report'), args: ScheduleRequest }),
   z.strictObject({ tool: z.literal('run_usage_report'), args: ReportRequest }),
 ]);
 export type AdminOperation = z.infer<typeof AdminOperation>;
