@@ -37,7 +37,7 @@ const backupFolder = join(root, 'backups');
 mkdirSync(backupFolder, { mode: 0o700 });
 const backups = new DailyBackups(root, ids.serverId, [join(root, 'server')], () => store.recovery.paused(),
   () => store.reporting.event('backup_status', {}));
-const server = await createServer(store, origin, undefined, backups);
+const server = await createServer(store, origin, backups);
 let sends = 0;
 let clientClosed = false;
 // The sandboxed XCTest runner can read the fixture manifest and contact loopback.
@@ -71,6 +71,11 @@ const timer = setInterval(() => {
   }
 }, 100);
 try {
+  const markdownProbe = join(root, 'MacMarkdownProbe');
+  execFileSync('xcrun', ['swiftc', '-parse-as-library', '-module-cache-path', resolve('dist/mac-probe-cache'),
+    ...['Client', 'SettingsData', 'MessageMarkdown', 'ConversationStyle'].map(name => 'apps/mac/Arthegall/' + name + '.swift'),
+    'tests/fixtures/MacMarkdownProbe.swift', '-o', markdownProbe], { stdio: 'inherit' });
+  await run(markdownProbe, []);
   if (process.argv.includes('--session-only')) {
     const contents = join(root, 'SessionProbe.app', 'Contents');
     mkdirSync(join(contents, 'MacOS'), { recursive: true });

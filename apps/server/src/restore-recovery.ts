@@ -115,7 +115,7 @@ export class RestoreRecovery {
       const approval = this.db.prepare('SELECT decision,acknowledged FROM approvals WHERE id=? AND run_id=?').get(id,delivery.runId) as { decision: string | null; acknowledged: number };
       if ((decision && (decision.approvalId !== id || decision.runId !== delivery.runId || decision.decision !== approval.decision)) ||
           (!decision && approval.decision === 'accept'))
-        throw new Conflict('Approval decision conflicts with the restored browser decision');
+        throw new Conflict('Approval decision conflicts with the restored decision');
       if (decision) this.store.acknowledgeDecision(runner, id);
     }
   }

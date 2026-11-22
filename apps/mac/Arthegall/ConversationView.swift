@@ -226,7 +226,7 @@ private struct MessageStatus: View {
         case "queued": ("Queued for runner", "clock", .secondary)
         case "accepted", "running", "streaming": ("Responding…", "waveform", WorkspaceStyle.pine)
         case "awaiting_access": ("Awaiting reporting access", "hand.raised", .orange)
-        case "approval": (supportsApprovals ? "Awaiting command approval" : "Awaiting approval in browser", "hand.raised", .orange)
+        case "approval": (supportsApprovals ? "Awaiting command approval" : "Update server to approve this command", "hand.raised", .orange)
         case "decision_sent": ("Command decision sent", "checkmark.circle", .secondary)
         case "waiting_for_user": ("Waiting for your reply", "bubble.left", WorkspaceStyle.pine)
         case "blocked": ("Blocked", "exclamationmark.circle", .red)

@@ -8,16 +8,16 @@ const destination = resolve(process.argv[2] ?? `release/arthegall-${process.plat
 const version = readFileSync('.nvmrc', 'utf8').trim().replace(/^v/, '');
 if (process.versions.node !== version) throw new Error(`Package with the pinned Node ${version}`);
 if (existsSync(destination)) throw new Error('Package destination already exists; choose a new empty destination');
-if (!existsSync('dist/web/index.html')) throw new Error('Build the application before packaging');
+if (!existsSync('dist/scripts/arthegall.js')) throw new Error('Build the application before packaging');
 mkdirSync(destination, { recursive: true });
 for (const file of ['package.json', 'package-lock.json', 'README.md']) copyFileSync(file, join(destination, file));
 cpSync('docs', join(destination, 'docs'), { recursive: true });
-for (const workspace of ['apps/server', 'apps/runner', 'apps/web', 'packages/contracts']) {
+for (const workspace of ['apps/server', 'apps/runner', 'packages/contracts']) {
   mkdirSync(join(destination, workspace), { recursive: true });
   copyFileSync(join(workspace, 'package.json'), join(destination, workspace, 'package.json'));
 }
 // The Mac app and its Xcode test results also build under dist.
-for (const directory of ['apps', 'packages', 'scripts', 'web']) {
+for (const directory of ['apps', 'packages', 'scripts']) {
   cpSync(join('dist', directory), join(destination, 'dist', directory), { recursive: true });
 }
 // Resolve production dependencies from the same lockfile. Native install scripts

@@ -12,14 +12,13 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && npm run build --workspace @arthegall/web",
-    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck --workspace @arthegall/web",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsc -p tsconfig.json && node --test --test-timeout=30000 dist/tests/*.test.js",
     "probe:codex": "tsc -p tsconfig.json && node dist/scripts/probe-codex.js",
     "setup": "node dist/scripts/arthegall.js setup",
     "server": "node dist/scripts/arthegall.js server",
     "runner": "node dist/scripts/arthegall.js runner",
-    "test:browser": "npm run build && playwright test",
     "package": "npm run build && node dist/scripts/package.js",
     "package:mac": "tsc -p tsconfig.json && node dist/scripts/package-mac.js"
   },
@@ -27,7 +26,6 @@
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "26.6.6",
     "typescript": "7.0.2",
-    "@types/ws": "8.18.2",
-    "@playwright/test": "1.65.1"
+    "@types/ws": "8.18.2"
   }
 }

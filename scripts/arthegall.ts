@@ -59,12 +59,12 @@ if (command === 'setup') {
   const unlock = acquireProcessLock(root, 'server');
   const config = readConfig();
   const store = new ServerStore(join(root, 'server', 'server.sqlite'));
-  const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../web');
+  const buildRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const serverId = z.uuid().parse(store.db.prepare("SELECT value FROM metadata WHERE key='server'").pluck().get());
   const backups = new DailyBackups(root, serverId,
-    [dirname(webRoot), join(root,'releases'), join(root,'server'), join(root,'runner'), join(root,'workspaces')],
+    [buildRoot, join(root,'releases'), join(root,'server'), join(root,'runner'), join(root,'workspaces')],
     () => store.recovery.paused(), () => store.reporting.event('backup_status', {}));
-  const server = await createServer(store, config.origin, existsSync(webRoot) ? webRoot : undefined, backups);
+  const server = await createServer(store, config.origin, backups);
   await server.listen({ host: '127.0.0.1', port: config.port });
   console.log(`Arthegall server listening at ${config.origin}`);
   const close = async () => { await server.close(); store.close(); unlock(); };

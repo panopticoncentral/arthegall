@@ -1,22 +1,19 @@
 import Fastify, { type FastifyRequest, type RouteHandlerMethod } from 'fastify';
-import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
-import staticFiles from '@fastify/static';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
-import { BackupSettings, RetentionDays, RunActivityPage, RunnerFrame, SendMessage, Snapshot } from '../../../packages/contracts/src/index.js';
+import { BackupSettings, RetentionDays, RunActivityPage, RunnerFrame, Snapshot } from '../../../packages/contracts/src/index.js';
 import type { DailyBackups } from '../../../scripts/daily-backups.js';
 import type { Scan } from './restore-recovery.js';
 import { Conflict, ServerStore } from './store.js';
 import { EditDefinition, ReportingSettings, ScheduleRequest } from '../../../packages/contracts/src/reporting.js';
 
-export async function createServer(store: ServerStore, origin: string, webRoot?: string, backups?: DailyBackups) {
+export async function createServer(store: ServerStore, origin: string, backups?: DailyBackups) {
   const expected = new URL(origin);
-  if (expected.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(expected.hostname)) throw new Error('Remote browser access requires HTTPS');
+  if (expected.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(expected.hostname)) throw new Error('Remote client access requires HTTPS');
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
-  await app.register(cookie);
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
-  const browsers = new Map<WebSocket, { sessionId: string; token: string; cursor: number }>();
+  const clients = new Map<WebSocket, { token: string; cursor: number }>();
   const runners = new Map<WebSocket, { runnerId: string; ready: boolean; retention?: boolean; nextCleanup: number; scan?: Scan }>();
   store.recovery.offline();
   const alive = new Set<WebSocket>();
@@ -26,20 +23,20 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     socket.once('close', () => alive.delete(socket));
   };
   const heartbeat = setInterval(() => {
-    for (const socket of [...browsers.keys(), ...runners.keys()]) {
+    for (const socket of [...clients.keys(), ...runners.keys()]) {
       if (!alive.delete(socket)) socket.terminate();
       else if (socket.readyState === 1) socket.ping();
     }
   }, 15_000);
   const send = (socket: WebSocket, value: unknown) => { if (socket.readyState === 1 && socket.bufferedAmount < 512 * 1024) socket.send(JSON.stringify(value)); };
   const tick = () => {
-    for (const [socket, browser] of browsers) {
-      if (!store.session(browser.token)) { socket.close(1008, 'Session revoked'); continue; }
-      for (const event of store.events(browser.cursor)) {
+    for (const [socket, client] of clients) {
+      if (!store.session(client.token)) { socket.close(1008, 'Session revoked'); continue; }
+      for (const event of store.events(client.cursor)) {
         const item = z.object({ sequence: z.number() }).parse(event);
         if (socket.bufferedAmount >= 512 * 1024) { socket.close(1013, 'Reload snapshot'); break; }
         send(socket, { type: 'event', ...event as object });
-        browser.cursor = item.sequence;
+        client.cursor = item.sequence;
       }
     }
     for (const [socket, runner] of runners) {
@@ -65,36 +62,25 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   app.addHook('preClose', async () => {
     clearInterval(timer);
     clearInterval(heartbeat);
-    const sockets = [...browsers.keys(), ...runners.keys()];
-    browsers.clear(); runners.clear();
+    const sockets = [...clients.keys(), ...runners.keys()];
+    clients.clear(); runners.clear();
     for (const socket of sockets) socket.terminate();
   });
-  // The prefix is part of the hashed secret. A cookie cannot authenticate an app or vice versa.
+  // Require a native token, even when a historical browser session still exists.
   function appToken(request: FastifyRequest) {
     const auth = request.headers.authorization;
     return auth?.startsWith('Bearer app.') ? auth.slice(7) : '';
-  }
-  function browserToken(request: FastifyRequest) {
-    const token = request.cookies.arthegall ?? '';
-    return token.startsWith('app.') ? '' : token;
   }
   app.addHook('onRequest', async (request, reply) => {
     if (request.headers.host !== expected.host) return reply.code(403).send({ error: 'Unrecognized host' });
     reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
-    if (request.url.startsWith('/runner')) return;
     const route = request.routeOptions.url;
-    if (route?.startsWith('/client/v1/')) {
-      if (request.headers.origin && request.headers.origin !== expected.origin) return reply.code(403).send({ error: 'Unrecognized origin' });
-      if (request.headers['x-arthegall-client'] !== '1') return reply.code(400).send({ error: 'Client protocol version 1 required' });
-      if (route !== '/client/v1/pair' && !store.session(appToken(request))) return reply.code(401).send({ error: 'Pair this app to continue' });
-      return;
-    }
-    if ((!['GET', 'HEAD'].includes(request.method) || request.url.startsWith('/events')) && request.headers.origin !== expected.origin) return reply.code(403).send({ error: 'Unrecognized origin' });
-    if (request.url.startsWith('/api/') && request.url !== '/api/pair') {
-      if (!store.session(browserToken(request))) return reply.code(401).send({ error: 'Pair this browser to continue' });
-    }
+    if (!route?.startsWith('/client/v1/')) return;
+    if (request.headers.origin && request.headers.origin !== expected.origin) return reply.code(403).send({ error: 'Unrecognized origin' });
+    if (request.headers['x-arthegall-client'] !== '1') return reply.code(400).send({ error: 'Client protocol version 1 required' });
+    if (route !== '/client/v1/pair' && !store.session(appToken(request))) return reply.code(401).send({ error: 'Pair this app to continue' });
   });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) return reply.code(400).send({ error: 'Invalid request' });
@@ -104,22 +90,16 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   const pairingCode = z.strictObject({ code: z.string().trim().min(1).max(128) });
   app.post('/client/v1/pair', async (request, reply) => {
     const { code } = pairingCode.parse(request.body);
-    const session = store.pair(code, request.ip, Date.now(), 'app');
+    const session = store.pair(code, request.ip);
     if (!session) return reply.code(400).send({ error: 'Code invalid, expired, or temporarily rate limited' });
     return { version: 1, sessionId: session.id, token: session.token };
   });
-  app.post('/api/pair', async (request, reply) => {
-    const { code } = pairingCode.parse(request.body);
-    const session = store.pair(code, request.ip);
-    if (!session) return reply.code(400).send({ error: 'Code invalid, expired, or temporarily rate limited' });
-    reply.setCookie('arthegall', session.token, { path: '/', httpOnly: true, sameSite: 'strict', secure: expected.protocol === 'https:', maxAge: 365 * 24 * 60 * 60 });
-    return { paired: true };
-  });
   const snapshot = (sessionId: string) => Snapshot.parse({ ...store.snapshot(), backups: backups?.status(),
-    pairings: store.db.prepare('SELECT expires,id=? AS current FROM browser_sessions WHERE expires>? AND revoked=0 ORDER BY current DESC,expires DESC')
-      .all(sessionId, Date.now()),
+    // Pairing events distinguish existing app tokens without rewriting historical session rows.
+    pairings: store.db.prepare(`SELECT expires,id=? AS current FROM browser_sessions WHERE expires>? AND revoked=0
+      AND id IN (SELECT json_extract(data,'$.sessionId') FROM events WHERE kind='app_paired')
+      ORDER BY current DESC,expires DESC`).all(sessionId, Date.now()),
     runnerConnected: [...runners.values()].some((runner) => runner.ready) });
-  app.get('/api/snapshot', async request => snapshot(store.session(browserToken(request))!));
   app.get('/client/v1/snapshot', async request => ({ ...snapshot(store.session(appToken(request))!),
     settingsVersion: 1, commandApprovalsVersion: 1, recoveryVersion: 1 }));
   app.post('/client/v1/messages', async request => store.send(store.session(appToken(request))!, request.body));
@@ -127,10 +107,6 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     store.revokeSession(store.session(appToken(request))!);
     tick();
     return { revoked: true };
-  });
-  app.get('/api/activity', async (request) => {
-    const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
-    return store.events(query.after);
   });
   app.get('/client/v1/runs/:id/activity', async request => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
@@ -142,12 +118,10 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
   };
   function settingsPost(path: string, handler: RouteHandlerMethod, options = { allowDuringRecovery: false }) {
     const hooks = options.allowDuringRecovery ? {} : { preHandler: checkApprovalChanges };
-    app.post('/api' + path, hooks, handler);
     app.post('/client/v1' + path, hooks, handler);
   }
   function settingsSession(request: FastifyRequest) {
-    const token = request.routeOptions.url?.startsWith('/client/v1/') ? appToken(request) : browserToken(request);
-    return store.session(token)!;
+    return store.session(appToken(request))!;
   }
   if (backups) {
     settingsPost('/backups/settings', async request => {
@@ -172,12 +146,10 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     }
     return { saved: true };
   }, { allowDuringRecovery: true });
-  app.post('/api/messages', async (request) => store.send(store.session(browserToken(request))!, SendMessage.parse(request.body)));
   const readSettings: RouteHandlerMethod = async request => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
     return store.db.transaction(() => ReportingSettings.parse(store.reporting.settings(id)))();
   };
-  app.get('/api/conversations/:id/settings', readSettings);
   app.get('/client/v1/conversations/:id/settings', readSettings);
   settingsPost('/conversations/:id/definition', async request => {
     const { id } = z.object({ id: z.uuid() }).parse(request.params);
@@ -245,22 +217,15 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
     store.db.transaction(() => store.reporting.decide(settingsSession(request), id, decision, duration))();
     return { saved: true };
   });
-  app.post('/api/revoke', async (request, reply) => {
-    store.revokeSession(store.session(browserToken(request))!);
-    reply.clearCookie('arthegall', { path: '/' });
-    tick();
-    return { revoked: true };
-  });
   function subscribe(socket: WebSocket, request: FastifyRequest, token: string) {
     const sessionId = store.session(token);
     const query = z.object({ after: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
     if (!sessionId || !query.success) { socket.close(1008); return; }
-    browsers.set(socket, { sessionId, token, cursor: query.data.after });
+    clients.set(socket, { token, cursor: query.data.after });
     track(socket);
-    socket.on('close', () => browsers.delete(socket));
+    socket.on('close', () => clients.delete(socket));
     tick();
   }
-  app.get('/events', { websocket: true }, (socket, request) => subscribe(socket, request, browserToken(request)));
   app.get('/client/v1/events', { websocket: true }, (socket, request) => subscribe(socket, request, appToken(request)));
   app.get('/runner', { websocket: true }, (socket, request) => {
     if (request.headers.origin) { socket.close(1008); return; }
@@ -310,9 +275,5 @@ export async function createServer(store: ServerStore, origin: string, webRoot?:
       if (runners.delete(socket)) { store.recovery.offline(runnerId); store.runnerStatus(runnerId, 'unavailable'); }
     });
   });
-  if (webRoot) {
-    await app.register(staticFiles, { root: webRoot });
-    app.get('/', async (_request, reply) => reply.sendFile('index.html'));
-  }
   return app;
 }

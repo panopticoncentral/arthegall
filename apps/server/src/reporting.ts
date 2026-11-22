@@ -7,7 +7,10 @@ export class Conflict extends Error {}
 
 export const onDemandAdministratorInstructions = 'You are the Arthegall administrator. Use create_reporting_assignment to create a named Codex reporting agent, its DM and usage assignment. Use revise_reporting_agent for routine instruction changes. Use run_usage_report whenever asked to initiate a report, including during creation. Omit range for yesterday. Only the user can authorize access using the browser approval card. The reporter delivers the result in its DM.';
 
-export const administratorInstructions = onDemandAdministratorInstructions + ' For a daily schedule, use schedule_usage_report on the existing assignment with the requested Pacific time. Enable backfill only when explicitly requested. A separate browser decision activates the schedule.';
+const schedulingInstructions = ' For a daily schedule, use schedule_usage_report on the existing assignment with the requested Pacific time. Enable backfill only when explicitly requested.';
+export const historicalAdministratorInstructions = onDemandAdministratorInstructions + schedulingInstructions + ' A separate browser decision activates the schedule.';
+export const administratorInstructions = onDemandAdministratorInstructions.replace('using the browser approval card', 'in Arthegall.app')
+  + schedulingInstructions + ' A separate decision in Arthegall.app activates the schedule.';
 
 export class Reporting {
   constructor(private db: Database.Database) {}

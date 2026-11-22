@@ -143,8 +143,10 @@ async function until(description, predicate) {
 async function advance(action) {
   switch (action) {
     case 'edit-from-second-client': {
-      const response = await server.inject({ method: 'POST', url: `/api/conversations/${prior.dm}/definition`,
-        headers: { host: new URL(origin).host, origin, cookie: 'arthegall=' + prior.browserToken },
+      const second = store.pair(store.createPairingCode(), 'synthetic-second-client');
+      assert(second);
+      const response = await server.inject({ method: 'POST', url: `/client/v1/conversations/${prior.dm}/definition`,
+        headers: { host: new URL(origin).host, 'x-arthegall-client': '1', authorization: 'Bearer ' + second.token },
         payload: { revision: 1, instructions: 'Synthetic instructions from the second client.' } });
       assert.equal(response.statusCode, 200);
       break;

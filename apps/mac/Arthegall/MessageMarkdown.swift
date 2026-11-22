@@ -109,11 +109,11 @@ struct MessageMarkdown: View, Equatable {
         var rows: [Row] = []
     }
 
-    private static func blocks(_ source: String) -> [Block] {
+    static func parsedSource(_ source: String) -> AttributedString {
         guard var parsed = try? AttributedString(markdown: source,
             options: .init(allowsExtendedAttributes: false, failurePolicy: .returnPartiallyParsedIfPossible)),
             !parsed.characters.isEmpty else {
-            return [Block(id: 0, kind: .paragraph, text: AttributedString(source))]
+            return AttributedString(source)
         }
         // Display image descriptions locally and only activate ordinary web/mail links.
         for run in parsed.runs {
@@ -123,6 +123,12 @@ struct MessageMarkdown: View, Equatable {
             if run.imageURL != nil { parsed[run.range].imageURL = nil }
         }
 
+        return parsed
+    }
+
+    private static func blocks(_ source: String) -> [Block] {
+        let parsed = parsedSource(source)
+        if parsed.characters.isEmpty { return [Block(id: 0, kind: .paragraph, text: parsed)] }
         var result: [Block] = []
         var renderedItems = Set<Int>()
         for (intent, range) in parsed.runs[\.presentationIntent] {

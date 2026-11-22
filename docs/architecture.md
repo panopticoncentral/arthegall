@@ -2,17 +2,17 @@
 
 Design decisions · November 17, 2026
 
-This document describes the agreed architecture and delivery milestones for the first release. The [product design](design.md) defines the user experience, permissions, and two remaining product questions. The first release centers on a browser conversation with a dedicated administrator agent, followed by creation and scheduled execution of a daily usage-report assignment.
+This document describes the agreed architecture and delivery milestones for the first release. The [product design](design.md) defines the user experience, permissions, and two remaining product questions. The first release centers on a Mac conversation with a dedicated administrator agent, followed by creation and scheduled execution of a daily usage-report assignment.
 
 ## Stack and process boundaries
 
-Use TypeScript throughout, React for the browser, and Node.js on a supported LTS release for the server and runner. A common language and toolchain lets contributors follow work from the interface through dispatch and execution. Build and type-check TypeScript before shipping JavaScript. Pin the development and CI runtime, and include a compatible Node runtime and required native dependencies in each platform release package.
+Use SwiftUI for the Mac app and TypeScript on Node.js for the server and runner. Build and type-check TypeScript before shipping JavaScript. Pin the development and CI runtime, and include a compatible Node runtime and required native dependencies in each platform release package.
 
-The server serves the compiled browser assets and owns orchestration. Each runner is a separate process, including when installed alongside the server on the same machine. Runners can continue approved work through a server restart.
+The server owns orchestration and publishes a versioned Mac client API. Each runner is a separate process, including when installed alongside the server on the same machine. Runners can continue approved work through a server restart.
 
 | Component | Responsibilities |
 | --- | --- |
-| Browser | Conversations, folders, assignments, approvals, mentions, and inspection of agent activity. Sends commands and displays server-owned state. |
+| Mac app | Conversations, folders, assignments, approvals, mentions, and inspection of agent activity. Sends commands and displays server-owned state. |
 | Server | Agent definitions, assignments, schedules, conversations, scoped memory, permissions, dispatch, and durable results. |
 | Runner | Local workspaces, provider sessions, tool execution, cached assignment context and grants, and durable records of accepted work and undelivered results. |
 | Provider adapter | Translates runner operations into provider-specific session requests and translates provider events into Arthegall activity and approval requests. |
@@ -31,13 +31,13 @@ For a scheduled report, the server records the run and pending dispatch together
 
 ## HTTP, WebSockets, and shared contracts
 
-Use HTTP with JSON for browser commands and queries, including history retrieval, messages, and approvals. WebSockets deliver live messages, mentions, and assignment updates. The browser reloads missed state from the server after reconnecting.
+Use HTTP with JSON for Mac client commands and queries, including history retrieval, messages, and approvals. WebSockets deliver live messages, mentions, and assignment updates. The Mac app reloads missed state from the server after reconnecting.
 
 Each runner initiates an authenticated WebSocket connection to the server. Dispatches and revocations travel to the runner, while acknowledgments, progress, and results travel back. Pairing and update downloads use HTTP. Persistent queues and acknowledgment records supply recovery across broken connections.
 
 A shared TypeScript package defines message schemas, runtime validation, and an explicit protocol version. Server and runner compatibility must be checked as part of reconnecting after an update.
 
-The initial deployment uses a private network, including LAN or tailnet connectivity. Each browser pairs once with a short-lived server-generated code and keeps its session across visits. The user can revoke a browser's pairing. Standalone runners use one-time pairing or SSH installation and pairing.
+The initial deployment uses a private network, including LAN or tailnet connectivity. Each Mac pairs with a short-lived server-generated code and keeps its bearer credential in Keychain. The user can revoke that pairing. The server retains historical session rows for decision attribution. Standalone runners use one-time pairing or SSH installation and pairing.
 
 ## Assignments, runs, and sessions
 
@@ -76,7 +76,7 @@ The first provider adapter launches Codex app-server as a local child process an
 
 Each runner has one configured Codex account, shared by agents authorized to execute there. Credentials stay on that machine. The central server records connection status and available capabilities. Arthegall attributes execution to its agent and assignment independently of the shared provider account.
 
-When authentication expires, the runner reports that setup is needed, affected work waits, and the browser surfaces the action required to restore access.
+When authentication expires, the runner reports that setup is needed, affected work waits, and the Mac app surfaces the action required to restore access.
 
 ## Tools and permissions
 
@@ -117,7 +117,7 @@ The feasibility check established local Codex input, output, and total token cou
 
 ## Installation and updates
 
-The default installation starts the server and a local runner, enrolls that runner as part of installation, and supplies a short-lived code for the first browser. Setup checks Codex availability and authentication and guides the user through missing prerequisites. A bundled definition creates the dedicated administrator and opens its DM. From there the user creates other agents conversationally.
+The default installation starts the server and a local runner, enrolls that runner as part of installation, and supplies a short-lived code for the first Mac app. Setup checks Codex availability and authentication and guides the user through missing prerequisites. A bundled definition creates the dedicated administrator and opens its DM. From there the user creates other agents conversationally.
 
 Standalone runner installation adds other machines through pairing or SSH deployment. Runners fetch signed updates and restart after active work finishes. Local reinstallation or SSH deployment supplies a repair path, preserving pairing and grants on the same machine. Platform packages include the runtime and required dependencies.
 
@@ -143,7 +143,7 @@ These milestones are checkpoints toward the first release. The product design su
 
 ### 1. Durable administrator DM
 
-Install the server and local runner and pair a browser. Send a message to the bundled administrator, persist and dispatch it, execute through the Codex adapter, and display the response in the browser.
+Install the server and local runner and pair the Mac app. Send a message to the bundled administrator, persist and dispatch it, execute through the Codex adapter, and display the response in the Mac app.
 
 Acceptance covers restarting the server and runner and continuing the same conversation. Exercise a connection drop and verify that the completed response is delivered once after reconnecting. This validates the process boundaries, persistence, session resumption, and application delivery protocol together.
 
@@ -155,7 +155,7 @@ This checkpoint passed on the deployed installation. [Milestone 2 acceptance](mi
 
 ### 3. Scheduled reporting and catch-up
 
-Schedule the same assignment to report the previous local calendar day's usage. Execute while the browser is closed and deliver into the existing DM. Verify that a new recurring run receives a fresh provider session with the current instructions and relevant memory. A preference expressed in a reply must carry forward to the next report.
+Schedule the same assignment to report the previous local calendar day's usage. Execute while the Mac app is closed and deliver into the existing DM. Verify that a new recurring run receives a fresh provider session with the current instructions and relevant memory. A preference expressed in a reply must carry forward to the next report.
 
 Exercise missed occurrences and confirm that the default produces one current report while recording the missed runs. Verify that explicit backfill follows the assignment's instructions and delivery retries preserve one copy of each result.
 
@@ -163,6 +163,6 @@ The [milestone 3 operating notes and verification](milestone-3.md) describe sche
 
 ### Release verification
 
-The browser renders Markdown from the saved message text. The persisted-report Playwright check opens an earlier reporting DM, reloads it at a narrow width, and verifies headings, lists, emphasis, a usage table, and safe link handling. It opens the original text and recorded evidence, then sends a reply to the selected report.
+The Mac app renders the saved Markdown and exposes the original text and recorded evidence. The native conversation and reporting tests cover Markdown structure, exact copied evidence and text, and replies to a selected report across relaunches.
 
 Verify the supporting behavior defined above, including waiting agents releasing capacity, bounded recovery, offline execution and revocation, permission-checked tools, and pending central operations. Verify backup restoration with dispatch reconciliation, retention with pinned evidence and durable deduplication records, and platform installation and update behavior. Public samples and fixtures use synthetic data. These checks substantiate release behavior beyond the initial three milestones.

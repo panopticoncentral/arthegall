@@ -17,7 +17,7 @@ test('paired Mac run activity, pin changes and restore decisions share the serve
   const store = new ServerStore(prior.serverPath);
   const runner = new RunnerStore(prior.runnerPath, prior.ids.runner);
   const server = await createServer(store, 'http://localhost');
-  const mac = store.pair(store.createPairingCode(), 'fixture', Date.now(), 'app')!;
+  const mac = store.pair(store.createPairingCode(), 'fixture')!;
   const headers = { host: 'localhost', authorization: 'Bearer ' + mac.token, 'x-arthegall-client': '1' };
   const runPath = '/client/v1/runs/' + prior.run;
   const write = (url: string, payload: object = {}) => server.inject({ method: 'POST', url, headers, payload });

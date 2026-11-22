@@ -1,19 +1,35 @@
 import { availablePort } from './helpers/port.js';
-import { test, expect } from '@playwright/test';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { once } from 'node:events';
+import { getCACertificates, setDefaultCACertificates } from 'node:tls';
+import WebSocket from 'ws';
+import { NativeTestClient, pairNative, setupCode, waitFor, waitForServer } from './helpers/native-client.js';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer as createHttpsServer } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
-import { createHash, X509Certificate } from 'node:crypto';
 
-test('trusted HTTPS reverse proxy preserves secure pairing and both WebSocket routes', async ({ playwright }) => {
+test('trusted HTTPS reverse proxy carries native pairing and both WebSocket routes', { skip: process.platform === 'win32' }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'arthegall-https-'));
   const key = join(root, 'key.pem'), certificate = join(root, 'certificate.pem');
-  // Trust exactly this ephemeral certificate in the browser, without disabling TLS validation.
-  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', certificate, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1', '-addext', 'basicConstraints=critical,CA:TRUE'], { stdio: 'ignore' });
+  // Trust the ephemeral certificate in this test process and its runner, without disabling TLS validation.
+  const certificateConfig = join(root, 'certificate.cnf');
+  writeFileSync(certificateConfig, `[req]
+distinguished_name = name
+prompt = no
+x509_extensions = extensions
+[name]
+CN = localhost
+[extensions]
+subjectAltName = DNS:localhost,IP:127.0.0.1
+basicConstraints = critical,CA:TRUE
+`);
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', certificate, '-days', '1',
+    '-config', certificateConfig], { stdio: 'ignore' });
   const backendPort = await availablePort();
   const proxy = createHttpsServer({ key: readFileSync(key), cert: readFileSync(certificate) }, (request, response) => {
     const upstream = httpRequest({ host: '127.0.0.1', port: backendPort, path: request.url, method: request.method, headers: request.headers }, (result) => {
@@ -35,33 +51,39 @@ test('trusted HTTPS reverse proxy preserves secure pairing and both WebSocket ro
   const env = { ...process.env, ARTHEGALL_DATA_DIR: root, ARTHEGALL_PORT: String(backendPort), ARTHEGALL_ORIGIN: origin, NODE_EXTRA_CA_CERTS: certificate };
   const cli = resolve('dist/scripts/arthegall.js');
   const setup = execFileSync(process.execPath, [cli, 'setup'], { env, encoding: 'utf8' });
-  const code = setup.match(/minutes\): (\S+)/)![1]!;
+  const code = setupCode(setup);
   const start = (command: string) => spawn(process.execPath, [cli, command, '--fake'], { env, stdio: 'ignore' });
   const stop = async (child: ChildProcess) => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const closed = new Promise<void>((resolve) => child.once('close', resolve)); child.kill(); await closed;
   };
   const server = start('server'), runner = start('runner');
-  const publicKey = new X509Certificate(readFileSync(certificate)).publicKey.export({ type: 'spki', format: 'der' });
-  const pin = createHash('sha256').update(publicKey).digest('base64');
-  const browser = await playwright.chromium.launch({ args: [`--ignore-certificate-errors-spki-list=${pin}`] });
+  const ca = readFileSync(certificate, 'utf8');
+  const inherited = getCACertificates('default');
+  let socket: WebSocket | undefined;
   try {
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    await expect.poll(async () => { try { await page.goto(origin); return await page.getByLabel('Pairing code').count(); } catch { return 0; } }).toBe(1);
-    await page.getByLabel('Pairing code').fill(code);
-    await page.getByRole('button', { name: 'Pair browser' }).click();
-    const composer = page.getByLabel('Message Administrator', { exact: true });
-    await composer.fill('Synthetic HTTPS message'); await composer.press('Enter');
-    await expect(page.getByText('Synthetic response: Synthetic HTTPS message', { exact: true })).toBeVisible();
-    const cookie = (await context.cookies()).find((cookie) => cookie.name === 'arthegall')!;
-    expect(cookie.secure).toBe(true); expect(cookie.httpOnly).toBe(true); expect(cookie.sameSite).toBe('Strict');
-    await page.reload();
-    await expect(page.getByText('Synthetic response: Synthetic HTTPS message', { exact: true })).toHaveCount(1);
-    await expect(page.getByRole('status')).toContainText('Connected');
-    await context.close();
+    setDefaultCACertificates([...inherited, ca]);
+    await waitForServer(origin);
+    const pairing = await pairNative(origin, code);
+    const client = new NativeTestClient(origin, pairing.token);
+    const snapshot = await client.snapshot();
+    const admin = snapshot.conversations.find(conversation => conversation.administrator);
+    assert(admin);
+    socket = new WebSocket(origin.replace('https:', 'wss:') + '/client/v1/events?after=' + snapshot.cursor,
+      { headers: client.headers, ca });
+    const events: string[] = [];
+    socket.on('message', raw => events.push(JSON.parse(raw.toString()).kind));
+    await once(socket, 'open');
+    const message = 'Synthetic HTTPS message';
+    await client.send(admin.id, message);
+    await waitFor('the runner outcome through the HTTPS proxy', () => events.includes('outcome'));
+    const refreshed = await client.snapshot();
+    assert.equal(refreshed.runnerConnected, true);
+    assert.equal(refreshed.messages.filter(item => item.text === 'Synthetic response: ' + message).length, 1);
   } finally {
-    await browser.close(); await stop(runner); await stop(server);
+    socket?.terminate();
+    setDefaultCACertificates(inherited);
+    await stop(runner); await stop(server);
     proxy.closeAllConnections(); await new Promise<void>((resolve) => proxy.close(() => resolve()));
     rmSync(root, { recursive: true, force: true });
   }

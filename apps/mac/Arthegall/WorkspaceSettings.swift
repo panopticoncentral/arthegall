@@ -121,7 +121,7 @@ private struct SystemSettings: View {
                                 .disabled(!recovery.ready)
                         }.buttonStyle(.bordered).disabled(!model.online || model.savingSettings)
                     } else {
-                        Text("Open the browser or update this server to manage restore recovery from the Mac app.")
+                        Text("Update this server to manage restore recovery from the Mac app.")
                     }
                 }
             }

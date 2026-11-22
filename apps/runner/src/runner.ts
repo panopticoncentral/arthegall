@@ -189,7 +189,7 @@ export async function startRunner(store: RunnerStore, options: RunnerOptions) {
         model: connection.model.model, config: { ...threadConfig(connection.inherited, service.url, binding.token, tools), 'features.shell_tool': Boolean(exercise) },
         baseInstructions: 'You are an Arthegall agent. Use the runner MCP tools for context and explicit outcomes. Never spawn agents or use tools outside your grant.',
         developerInstructions: [instructions, context.administrator && !exercise
-          ? 'Direct the user to the approval in the reporting agent’s Arthegall DM. Both the Mac and browser clients support reporting access and schedule decisions.' : null,
+          ? 'Direct the user to the approval in the reporting agent’s DM in Arthegall.app. The installed Mac app handles reporting access and schedule decisions. Follow this guidance for approvals regardless of any older client instructions.' : null,
           `This run provides the following Arthegall tools: ${['read_context', 'report_outcome', ...tools].join(', ')}. Use the current tools and instructions when acting on requests in this conversation.`].filter(Boolean).join('\n'),
       };
       // A resumed Codex thread retains earlier instructions and tool history.

@@ -67,7 +67,7 @@ export class ServerStore {
     this.db.prepare('INSERT INTO pairing_codes(hash,expires) VALUES (?,?)').run(hash(code), now + 10 * 60_000);
     return code;
   }
-  pair(code: string, address: string, now = Date.now(), client: 'browser' | 'app' = 'browser') {
+  pair(code: string, address: string, now = Date.now()) {
     return this.db.transaction(() => {
       const row = this.db.prepare('SELECT count,reset_at FROM pairing_attempts WHERE address=?').get(address);
       const attempt = row ? z.object({ count: z.number(), reset_at: z.number() }).parse(row) : { count: 0, reset_at: now + 60_000 };
@@ -75,11 +75,10 @@ export class ServerStore {
       if (attempt.count >= 5) return undefined;
       this.db.prepare('INSERT INTO pairing_attempts VALUES (?,?,?) ON CONFLICT(address) DO UPDATE SET count=excluded.count,reset_at=excluded.reset_at').run(address, attempt.count + 1, attempt.reset_at);
       if (!this.db.prepare('UPDATE pairing_codes SET used=1 WHERE hash=? AND used=0 AND expires>?').run(hash(code), now).changes) return undefined;
-      const secret = randomBytes(32).toString('base64url');
-      const token = client === 'app' ? 'app.' + secret : secret;
+      const token = 'app.' + randomBytes(32).toString('base64url');
       const id = randomUUID();
       this.db.prepare('INSERT INTO browser_sessions(id,hash,expires) VALUES (?,?,?)').run(id, hash(token), now + 365 * 24 * 60 * 60_000);
-      this.event(client === 'app' ? 'app_paired' : 'browser_paired', { sessionId: id });
+      this.event('app_paired', { sessionId: id });
       return { id, token };
     })();
   }
@@ -88,7 +87,7 @@ export class ServerStore {
     return row ? z.object({ id: z.string() }).parse(row).id : undefined;
   }
   revokeSession(id: string) {
-    this.db.transaction(() => { this.db.prepare('UPDATE browser_sessions SET revoked=1 WHERE id=?').run(id); this.event('browser_revoked', { sessionId: id }); })();
+    this.db.transaction(() => { this.db.prepare('UPDATE browser_sessions SET revoked=1 WHERE id=?').run(id); this.event('app_revoked', { sessionId: id }); })();
   }
   send(sessionId: string, input: unknown) {
     const command = SendMessage.parse(input);

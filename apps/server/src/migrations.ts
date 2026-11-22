@@ -1,4 +1,4 @@
-import { administratorInstructions, onDemandAdministratorInstructions } from './reporting.js';
+import { historicalAdministratorInstructions, onDemandAdministratorInstructions } from './reporting.js';
 
 export const migrations = [{ version: 1, sql: `
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -43,7 +43,7 @@ CREATE TABLE report_context (
 CREATE TABLE admin_receipts (
   run_id TEXT NOT NULL REFERENCES runs(id), operation TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(run_id,operation));
 ` }, { version: 3, sql: `
-UPDATE agents SET revision=revision+1,instructions='${administratorInstructions.replaceAll("'", "''")}'
+UPDATE agents SET revision=revision+1,instructions='${historicalAdministratorInstructions.replaceAll("'", "''")}'
   WHERE id=(SELECT value FROM metadata WHERE key='administrator');
 INSERT OR IGNORE INTO definition_history SELECT id,revision,instructions,NULL FROM agents;
 

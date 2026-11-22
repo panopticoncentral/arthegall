@@ -68,7 +68,7 @@ export function manageService(action: string, root: string, source: string) {
     const binary = join(destination, 'runtime', 'node'), cli = join(destination, 'dist', 'scripts', 'arthegall.js');
     const codex = process.env.ARTHEGALL_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
     if (!codex.startsWith('/') || !existsSync(codex)) throw new Error('Install Codex and set ARTHEGALL_CODEX_BIN to its absolute path');
-    // Setup retains existing identities and browser pairing on repeated installs.
+    // Setup retains existing identities and native pairings on repeated installs.
     execFileSync(binary, [cli, 'setup'], { env: { ...process.env, ARTHEGALL_DATA_DIR: root }, stdio: 'inherit' });
     mkdirSync(join(root, 'logs'), { recursive: true, mode: 0o700 });
     mkdirSync(agents, { recursive: true });

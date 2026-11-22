@@ -1,5 +1,4 @@
-// Server and runner use the same canonical wire representation. The browser
-// imports only the schemas; hashing journal entries belongs to the two stores.
+// Server and runner use the same canonical wire representation.
 import { createHash } from 'node:crypto';
 import { Delivery, Dispatch, HistoryReceipt, OperationResult } from './index.js';
 

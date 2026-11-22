@@ -31,7 +31,7 @@ const store = new ServerStore(join(root, 'server.sqlite'), () => clock);
 const ids = store.setup('synthetic');
 const local = new RunnerStore(join(root, 'runner.sqlite'), ids.runnerId);
 const server = await createServer(store, origin);
-const browser = store.pair(store.createPairingCode(), 'synthetic-browser');
+const secondClient = store.pair(store.createPairingCode(), 'synthetic-second-client');
 const fixtureRoute = `/fixture/${randomUUID()}`;
 const replyText = 'Put source coverage first from now on.';
 let replySubmissions = 0;
@@ -52,7 +52,7 @@ server.post(fixtureRoute, async (request, reply) => {
     const sent = store.snapshot().messages.some(message => message.conversationId === ids.conversationId && message.author === 'user');
     return reply.code(409).send({ error: sent ? 'The Administrator received a message, but Rowan was not created.' : 'No Administrator message reached the fixture server.' });
   }
-  if (request.body.decline) await browserDecline(request.body.decline);
+  if (request.body.decline) await declineFromSecondClient(request.body.decline);
   else throw new Error('Unknown fixture action');
   return { ok: true };
 });
@@ -113,8 +113,8 @@ async function advance(day) {
   assert.fail(`Scheduled delivery for June ${day} did not finish`);
 }
 
-async function browserDecline(id) {
-  const response = await server.inject({ method: 'POST', url: `/api/schedules/${id}`,
-    headers: { host: new URL(origin).host, origin, cookie: `arthegall=${browser.token}` }, payload: { decision: 'decline' } });
+async function declineFromSecondClient(id) {
+  const response = await server.inject({ method: 'POST', url: `/client/v1/schedules/${id}`,
+    headers: { host: new URL(origin).host, 'x-arthegall-client': '1', authorization: 'Bearer ' + secondClient.token }, payload: { decision: 'decline' } });
   assert.equal(response.statusCode, 200);
 }

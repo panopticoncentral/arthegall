@@ -1,9 +1,11 @@
 // This drill runs the same CLI and services operators use. Set ARTHEGALL_PACKAGE_PATH
-// to exercise the bundled runtime, server, runner and web assets.
-import { test, expect } from '@playwright/test';
+// to exercise the bundled runtime, server and runner.
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { NativeTestClient, pairNative, setupCode, waitFor, waitForServer } from './helpers/native-client.js';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, cpSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, cpSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -15,9 +17,9 @@ import { reportingUpgrade } from './helpers/reporting-upgrade.js';
 import { ServerStore } from '../apps/server/src/store.js';
 import { RunnerStore } from '../apps/runner/src/store.js';
 
-test('rotated daily backup restores an acknowledged occurrence through the paired DM', async ({ page }) => {
-  test.setTimeout(180_000);
-  const root = mkdtempSync(join(tmpdir(), 'arthegall-restore-'));
+test('rotated daily backup restores acknowledged reports and preserves a paired client',
+  { timeout: 180_000, skip: process.platform === 'win32' }, async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'arthegall-restore-')));
   const prior = await reportingUpgrade(root);
   const port = await availablePort(), origin = 'http://127.0.0.1:' + port;
   for (const role of ['server','runner']) {
@@ -60,6 +62,8 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
   let local: RunnerStore | undefined;
   try {
     const seed = new ServerStore(path);
+    const pairing = seed.pair(seed.createPairingCode(), 'synthetic-installed-client')!;
+    const client = new NativeTestClient(origin, pairing.token);
     const pinnedTrace = 'Synthetic retained provider trace';
     const history = new Database(localPath);
     try {
@@ -77,116 +81,111 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     seed.scheduler.decide(String(seed.db.prepare('SELECT id FROM report_schedules').pluck().get()),prior.session,true);
     seed.close();
     let server = launch('server');
-    await expect.poll(async () => fetch(origin).then(r=>r.status).catch(()=>0)).toBe(200);
-    await page.context().addCookies([{url:origin,name:'arthegall',value:prior.browserToken,httpOnly:true}]);
-    await page.goto(origin);
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
-    await page.getByText('Daily server backups',{exact:false}).first().click();
-    await page.getByLabel('Backup folder on the server').fill(destination);
-    await page.getByLabel('Daily copies to keep').fill('2');
-    await page.getByRole('button',{name:'Enable daily backups'}).click();
-    await expect(page.getByRole('alert')).toContainText('Daily backup needs attention');
-    await page.reload();
-    await expect(page.getByRole('alert')).toContainText('Daily backup needs attention');
+    await waitForServer(origin);
+    const retired = await fetch(origin + '/api/snapshot', { headers: { Cookie: 'arthegall=' + prior.browserToken } });
+    assert.equal(retired.status, 404);
+    assert.equal((await fetch(origin)).status, 404);
+    const earlier = (await client.snapshot()).messages.find(message => message.text === 'Earlier synthetic report');
+    assert(earlier?.evidence);
+    assert.deepEqual(earlier.evidence, JSON.parse(prior.evidence));
+    const fresh = await pairNative(origin, setupCode(cli('pair').toString()));
+    assert.notEqual(fresh.sessionId, pairing.id);
+    assert.deepEqual((await new NativeTestClient(origin, fresh.token).snapshot()).messages, (await client.snapshot()).messages);
+    assert.deepEqual(query(`SELECT access.session_id FROM report_access access
+      JOIN browser_sessions session ON session.id=access.session_id WHERE access.id=?`, prior.grant), [{ session_id: prior.session }]);
+    await client.post('backups/settings', { enabled: true, destination, keep: 2 });
+    const failure = await waitFor('backup error', async () => (await client.snapshot()).backups?.error);
+    assert.equal((await client.snapshot()).backups?.error, failure);
     const catalog = new Database(join(root,'server','daily-backups.sqlite'),{readonly:true});
     try {
       const copies = () => catalog.prepare('SELECT day,name FROM copies WHERE sha256 IS NOT NULL ORDER BY day').all() as {day:string;name:string}[];
       const before = copies();
-      expect(before.map(c=>c.day)).toEqual(['2020-01-01','2020-01-02']);
-      for (const c of before) expect(existsSync(join(offline,c.name,'manifest.json'))).toBe(true);
+      assert.deepEqual(before.map(c=>c.day), ['2020-01-01','2020-01-02']);
+      for (const c of before) assert.equal(existsSync(join(offline,c.name,'manifest.json')), true);
       renameSync(offline,destination);
-      await page.getByRole('button',{name:'Back to conversation'}).click();
-      await page.getByRole('button',{name:'Open backup settings'}).click();
-      await page.getByRole('button',{name:'Retry daily backup'}).click();
-      await expect(page.getByRole('alert')).toHaveCount(0);
+      await client.post('backups/retry');
+      await waitFor('rotated backup', async () => {
+        const status = (await client.snapshot()).backups;
+        return status && !status.running && !status.error && status.lastPath;
+      });
       const kept = copies();
-      expect(kept.map(c=>c.day)).toEqual(['2020-01-02',Temporal.Now.plainDateISO().toString()]);
-      expect(existsSync(join(destination,before[0]!.name))).toBe(false);
-      expect(existsSync(join(manual,'manifest.json'))).toBe(true);
+      assert.deepEqual(kept.map(c=>c.day), ['2020-01-02',Temporal.Now.plainDateISO().toString()]);
+      assert.equal(existsSync(join(destination,before[0]!.name)), false);
+      assert.equal(existsSync(join(manual,'manifest.json')), true);
       backup = join(destination,kept[1]!.name);
-      await expect(page.getByText(/Last verified/)).toContainText(kept[1]!.name);
+      assert.equal((await client.snapshot()).backups?.lastPath, backup);
     } finally { catalog.close(); }
-    expect(Date.now()).toBeLessThan(due.epochMilliseconds);
-    expect(report()).toEqual([]);
+    assert(Date.now() < due.epochMilliseconds);
+    assert.deepEqual(report(), []);
     // Pin AFTER the backup. Restoring that snapshot must preserve the hold.
-    await page.getByRole('button',{name:'Rowan',exact:true}).click();
-    const pinnedReport = page.getByRole('article').filter({hasText:'Earlier synthetic report'});
-    await pinnedReport.getByText('Run details',{exact:true}).click();
-    await pinnedReport.getByRole('button',{name:'Pin run',exact:true}).click();
-    await expect(pinnedReport.getByRole('button',{name:'Unpin run'})).toBeVisible();
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
-    await page.locator('summary').filter({hasText:'Execution history'}).click();
-    await expect(page.getByLabel('Days to keep completed run details')).toHaveValue('30');
-    await page.getByRole('button',{name:'Back to conversation'}).click();
+    await client.post('runs/' + prior.run + '/pin', { pinned: true });
+    assert.equal((await client.snapshot()).runs.find(run => run.id === prior.run)?.pinned, 1);
+    assert.equal((await client.snapshot()).retentionDays, 30);
     const period = due.subtract({days:1}).toPlainDate().toString();
     mkdirSync(join(prior.roots.codex,'sessions'),{recursive:true});
     writeFileSync(join(prior.roots.codex,'sessions','fixture.jsonl'),JSON.stringify({timestamp:period+'T20:00:00Z',type:'token_usage_record',
       payload:{response_id:'synthetic-response',usage:{input_tokens:8,output_tokens:5,total_tokens:13}}}));
     let runner = launch('runner');
-    await expect.poll(()=>report()[0]?.state,{timeout:90_000}).toBe('completed');
+    await waitFor('first scheduled report', () => report()[0]?.state === 'completed', 90_000);
     const original = report()[0]!;
-    expect(original.conversation_id).toBe(prior.dm);
-    expect(original.text).toBe('Synthetic total: 13');
+    assert.equal(original.conversation_id, prior.dm);
+    assert.equal(original.text, 'Synthetic total: 13');
     local = new RunnerStore(localPath,prior.ids.runner);
-    await expect.poll(()=>local!.nextDelivery()).toBeUndefined();
+    await waitFor('the runner to acknowledge all deliveries', () => !local!.nextDelivery());
     // Materialize the following day's occurrence with the same scheduler at an
     // advanced clock. The running packaged runner executes the queued dispatch.
     const nextDue = (query('SELECT next_due FROM report_schedules')[0] as {next_due:number}).next_due;
     const nextDay = new ServerStore(path,()=>new Date(nextDue));
-    try { expect(nextDay.nextDispatch(prior.ids.runner)?.context.occurrence).toBeTruthy(); } finally { nextDay.close(); }
-    await expect.poll(()=>report()[1]?.state).toBe('completed');
+    try { assert(nextDay.nextDispatch(prior.ids.runner)?.context.occurrence); } finally { nextDay.close(); }
+    await waitFor('second scheduled report', () => report()[1]?.state === 'completed');
     const second = report()[1]!;
     const completedReports = [original,second];
-    const secondMessage = page.getByRole('article').filter({hasText:second.text});
-    await secondMessage.getByText('Run details',{exact:true}).click();
-    await secondMessage.getByRole('button',{name:'Pin run',exact:true}).click();
-    await expect(secondMessage.getByRole('button',{name:'Unpin run'})).toBeVisible();
+    await client.post('runs/' + second.run_id + '/pin', { pinned: true });
+    assert.equal((await client.snapshot()).runs.find(run => run.id === second.run_id)?.pinned, 1);
     const pinnedFile = join(root,'workspaces',prior.assignment,'runs',second.run_id,'intermediate.txt');
     writeFileSync(pinnedFile,'Synthetic pinned workspace evidence');
-    await expect.poll(()=>local!.nextDelivery()).toBeUndefined();
+    await waitFor('the runner to acknowledge all deliveries', () => !local!.nextDelivery());
     const fullDetails = () => ({
       execution:local!.execution(second.run_id), file:readFileSync(pinnedFile,'utf8'),
       deliveries:local!.db.prepare('SELECT * FROM deliveries WHERE run_id=? ORDER BY position').all(second.run_id),
       receipts:query("SELECT * FROM delivery_receipts WHERE json_extract(payload,'$.runId')=? ORDER BY delivery_id",second.run_id)
     });
     const pinnedDetails = fullDetails();
-    expect(pinnedDetails.execution.thread_id).toBeTruthy();
-    expect(pinnedDetails.execution.turn_id).toBeTruthy();
+    assert(pinnedDetails.execution.thread_id);
+    assert(pinnedDetails.execution.turn_id);
     const providerRuns = () => readFileSync(join(root,'scheduled-executions'),'utf8').trim().split('\n');
-    expect(providerRuns()).toEqual(completedReports.map(r=>r.run_id));
+    assert.deepEqual(providerRuns(), completedReports.map(r=>r.run_id));
     const receipts = () => query("SELECT * FROM delivery_receipts WHERE json_extract(payload,'$.runId')=? ORDER BY delivery_id",original.run_id);
     const beforePruning = receipts() as {delivery_id:string;payload:string}[];
     const originalDetail = beforePruning.map(row=>JSON.parse(row.payload)).find(d=>['progress','activity'].includes(d.event.kind));
-    expect(originalDetail).toBeTruthy();
+    assert(originalDetail);
     const workspace = join(root,'workspaces',prior.assignment,'runs',original.run_id);
     writeFileSync(join(workspace,'intermediate.txt'),'Synthetic temporary execution evidence');
     // Age these isolated closed runs, then exercise normal automatic cleanup
-    // by shortening the policy from 30 days to 2 in the paired operator UI.
+    // by shortening the policy from 30 days to 2 through the paired client.
     const aging = new Database(path);
     try { aging.prepare('UPDATE run_history SET closed_at=? WHERE run_id IN (?,?,?)')
       .run(Date.now()-5*86_400_000,prior.run,original.run_id,second.run_id); } finally { aging.close(); }
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
-    await page.locator('summary').filter({hasText:'Execution history'}).click();
-    await page.getByLabel('Days to keep completed run details').fill('2');
-    await page.getByRole('button',{name:'Save history retention'}).click();
-    await expect.poll(()=>query('SELECT phase FROM run_history WHERE run_id=?',original.run_id)).toEqual([{phase:'pruned'}]);
-    expect(existsSync(workspace)).toBe(false);
-    expect(local.execution(original.run_id).turn_id).toBeNull();
+    await client.post('retention', { days: 2 });
+    await waitFor('unpin cleanup', () =>
+      query('SELECT phase FROM run_history WHERE run_id=?', original.run_id).some(row => (row as { phase: string }).phase === 'pruned'));
+    assert.equal(existsSync(workspace), false);
+    assert.equal(local.execution(original.run_id).turn_id, null);
     const originalReceipts = receipts() as {delivery_id:string;payload:string}[];
-    expect(originalReceipts.map(row=>row.delivery_id)).toEqual(beforePruning.map(row=>row.delivery_id));
-    expect(originalReceipts.some(row=>JSON.parse(row.payload).kind==='history_receipt')).toBe(true);
+    assert.deepEqual(originalReceipts.map(row=>row.delivery_id), beforePruning.map(row=>row.delivery_id));
+    assert.equal(originalReceipts.some(row=>JSON.parse(row.payload).kind==='history_receipt'), true);
     const pinnedEvidence = () => ({
       detail:local!.execution(prior.run), trace:query("SELECT data FROM events WHERE kind='activity' AND json_extract(data,'$.runId')=?",prior.run),
       report:query('SELECT evidence FROM report_context WHERE run_id=?',prior.run),
       hold:query('SELECT pinned,phase FROM run_history WHERE run_id=?',prior.run)
     });
     const preserved = pinnedEvidence();
-    expect(preserved.detail.text).toBe(pinnedTrace);
-    expect(preserved.detail.turn_id).toBe('synthetic-pinned-turn');
-    expect(preserved.trace).toHaveLength(1);
-    expect(preserved.hold).toEqual([{pinned:1,phase:'full'}]);
-    expect(report()).toEqual(completedReports);
-    expect(fullDetails()).toEqual(pinnedDetails);
+    assert.equal(preserved.detail.text, pinnedTrace);
+    assert.equal(preserved.detail.turn_id, 'synthetic-pinned-turn');
+    assert.equal(preserved.trace.length, 1);
+    assert.deepEqual(preserved.hold, [{pinned:1,phase:'full'}]);
+    assert.deepEqual(report(), completedReports);
+    assert.deepEqual(fullDetails(), pinnedDetails);
     const progress = () => query('SELECT id,next_date,next_due FROM report_schedules');
     const originalProgress = progress();
     await stop(runner); await stop(server);
@@ -200,35 +199,33 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     try {
       clock = new Date(scheduler.status().nextDue!);
       await scheduler.tick();
-      expect(scheduler.status().error).toBeNull();
+      assert.equal(scheduler.status().error, null);
       newest = scheduler.status().lastPath!;
-      expect(newest).not.toBe(backup);
+      assert.notEqual(newest, backup);
       const retained = new Database(join(root,'server','daily-backups.sqlite'),{readonly:true});
       try {
-        expect(retained.prepare('SELECT name FROM copies WHERE sha256 IS NOT NULL ORDER BY day').pluck().all())
-          .toEqual([backup.split(/[\\/]/).at(-1),newest.split(/[\\/]/).at(-1)]);
+        assert.deepEqual(retained.prepare('SELECT name FROM copies WHERE sha256 IS NOT NULL ORDER BY day').pluck().all(),
+          [backup.split(/[\\/]/).at(-1),newest.split(/[\\/]/).at(-1)]);
       } finally { retained.close(); }
-      expect(existsSync(join(backup,'manifest.json'))).toBe(true);
+      assert.equal(existsSync(join(backup,'manifest.json')), true);
       const archived = new Database(join(newest,'server.sqlite'),{readonly:true});
-      try { expect(archived.prepare('SELECT run_id FROM report_occurrences ORDER BY due_date').pluck().all()).toEqual(completedReports.map(r=>r.run_id)); }
+      try { assert.deepEqual(archived.prepare('SELECT run_id FROM report_occurrences ORDER BY due_date').pluck().all(), completedReports.map(r=>r.run_id)); }
       finally { archived.close(); }
     } finally { await scheduler.close(); }
     const bad = join(root,'corrupt'); cpSync(backup,bad,{recursive:true});
     writeFileSync(join(bad,'server.sqlite'),'synthetic corruption');
-    expect(()=>cli('restore',bad)).toThrow(/checksum/);
-    expect(report()).toEqual(completedReports);
-    expect(fullDetails()).toEqual(pinnedDetails);
+    assert.throws(() => cli('restore', bad), /checksum/);
+    assert.deepEqual(report(), completedReports);
+    assert.deepEqual(fullDetails(), pinnedDetails);
     cli('restore',backup);
     server = launch('server');
-    await expect.poll(async () => fetch(origin).then(r=>r.status).catch(()=>0)).toBe(200);
-    await page.goto(origin);
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
-    await page.locator('summary').filter({hasText:'Daily server backups'}).click();
-    await expect(page.getByText(/Last verified/)).toContainText(newest);
-    await expect(page.getByLabel('Daily copies to keep')).toHaveValue('2');
-    await expect(page.getByText(/Offline — waiting for reconnect/)).toBeVisible();
-    await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeDisabled();
-    expect(report()).toEqual([]);
+    await waitForServer(origin);
+    const paused = await client.snapshot();
+    assert.equal(paused.backups?.lastPath, newest);
+    assert.equal(paused.backups?.keep, 2);
+    assert.equal(paused.recovery?.runners[0]?.status, 'offline');
+    assert.equal(paused.recovery?.ready, false);
+    assert.deepEqual(report(), []);
 
     // Replay just the header and first event for the newer run, then lose the server.
     const ws = new WebSocket(origin.replace('http:','ws:')+'/runner',{headers:{Authorization:'Bearer '+prior.runnerToken,'X-Arthegall-Runner':prior.ids.runner}});
@@ -245,54 +242,52 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     });
     await once(ws,'open');
     ws.send(JSON.stringify({type:'hello',version:1,runnerId:prior.ids.runner,inventoryVersion:1}));
-    await expect.poll(()=>receipts().length).toBe(1);
+    await waitFor('partial inventory receipt', () => receipts().length === 1);
     await stop(server); ws.terminate();
     server = launch('server');
-    await expect(page.getByText(/Offline — waiting for reconnect/)).toBeVisible();
+    await waitForServer(origin);
+    assert.equal((await client.snapshot()).recovery?.runners[0]?.status, 'offline');
     runner = launch('runner');
-    await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeEnabled();
-    expect(pinnedEvidence()).toEqual(preserved);
-    await page.locator('summary').filter({hasText:'Execution history'}).click();
-    await expect(page.getByLabel('Days to keep completed run details')).toHaveValue('2');
-    expect(query('SELECT pinned,phase FROM run_history WHERE run_id=?',second.run_id)).toEqual([{pinned:1,phase:'full'}]);
-    expect(query('SELECT phase FROM run_history WHERE run_id=?',original.run_id)).toEqual([{phase:'pruned'}]);
-    expect(unexpectedDispatch).toBe(false);
-    expect(report()).toEqual(completedReports);
-    expect(fullDetails()).toEqual(pinnedDetails);
-    expect(receipts()).toEqual(originalReceipts);
-    expect(progress()).toEqual(originalProgress);
-    await page.getByRole('button',{name:'Rowan',exact:true}).click();
-    await page.reload();
-    const recovered = page.getByRole('article').filter({hasText:original.text});
-    await expect(recovered).toHaveCount(1);
-    await expect(pinnedReport.getByText('Run details · Pinned')).toBeVisible();
-    await recovered.getByText('Run details',{exact:true}).click();
-    await expect(recovered.getByText('Detailed execution history pruned')).toBeVisible();
-    await recovered.getByText('Original message text').click();
-    expect(await recovered.locator('.original pre').textContent()).toBe(original.text);
-    await recovered.getByText(/Recorded usage/).click();
-    await expect(recovered.locator('.usage')).toContainText('13');
-    await recovered.getByRole('button',{name:'Reply to report'}).click();
-    expect(await page.evaluate(()=>sessionStorage.getItem('arthegall.reply'))).toBe(original.assistant_message_id);
+    await waitFor('runner reconciliation', async () => (await client.snapshot()).recovery?.ready);
+    assert.deepEqual(pinnedEvidence(), preserved);
+    assert.equal((await client.snapshot()).retentionDays, 2);
+    assert.deepEqual(query('SELECT pinned,phase FROM run_history WHERE run_id=?',second.run_id), [{pinned:1,phase:'full'}]);
+    assert.deepEqual(query('SELECT phase FROM run_history WHERE run_id=?',original.run_id), [{phase:'pruned'}]);
+    assert.equal(unexpectedDispatch, false);
+    assert.deepEqual(report(), completedReports);
+    assert.deepEqual(fullDetails(), pinnedDetails);
+    assert.deepEqual(receipts(), originalReceipts);
+    assert.deepEqual(progress(), originalProgress);
+    const recovered = await client.snapshot();
+    const saved = recovered.messages.filter(message => message.id === original.assistant_message_id);
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0]?.text, original.text);
+    assert.equal(saved[0]?.evidence?.codex.total, 13);
+    assert.deepEqual(saved[0]?.evidence, JSON.parse(original.evidence));
+    assert.equal(recovered.runs.find(run => run.id === prior.run)?.pinned, 1);
+    assert.equal(recovered.runs.find(run => run.id === original.run_id)?.history, 'pruned');
 
-    // A queued reply exercises the interactive dispatch gate during reconciliation.
-    await page.getByLabel('Message Rowan',{exact:true}).fill('Which synthetic sources had records?');
-    await page.getByRole('button',{name:'Queue message',exact:true}).click();
-    await expect.poll(()=>query('SELECT reply_to FROM report_context WHERE reply_to=?',original.run_id)).toEqual([{reply_to:original.run_id}]);
-    expect(local.db.prepare('SELECT count(*) FROM executions').pluck().get()).toBe(3);
-    await page.getByRole('button',{name:'Check runners again'}).click();
-    await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeEnabled();
-    expect(receipts()).toEqual(originalReceipts);
+    // Accept a targeted reply while paused, then verify the original report link.
+    const reply = await client.send(prior.dm, 'Which synthetic sources had records?', original.assistant_message_id);
+    assert.deepEqual(query('SELECT reply_to FROM report_context WHERE run_id=?', reply.runId), [{ reply_to: original.run_id }]);
+    assert.equal(local.db.prepare('SELECT count(*) FROM executions').pluck().get(), 3);
+    await client.post('recovery/recheck');
+    await waitFor('runner reconciliation', async () => (await client.snapshot()).recovery?.ready);
+    assert.deepEqual(receipts(), originalReceipts);
     // Model a lost receipt after recovery. Ordinary delivery must also deduplicate.
     local.db.prepare("UPDATE deliveries SET acknowledged=0 WHERE run_id=? AND json_extract(payload,'$.event.kind')='outcome'").run(original.run_id);
-    expect(readFileSync(join(root,'calls'),'utf8').split('\n').filter(x=>x==='turn/start')).toHaveLength(2);
-    await page.getByRole('button',{name:'Resume dispatch'}).click();
-    await expect.poll(()=>local!.nextDelivery()?.runId).not.toBe(original.run_id);
-    expect(report()).toEqual(completedReports);
-    expect(fullDetails()).toEqual(pinnedDetails);
-    expect(receipts()).toEqual(originalReceipts);
-    expect(providerRuns()).toEqual(completedReports.map(r=>r.run_id));
-    expect(local.db.prepare('SELECT count(*) FROM executions WHERE run_id=?').pluck().get(original.run_id)).toBe(1);
+    assert.equal(readFileSync(join(root,'calls'),'utf8').split('\n').filter(x=>x==='turn/start').length, 2);
+    await client.post('recovery/resume');
+    await waitFor('the recovered outcome receipt', () => local!.nextDelivery()?.runId !== original.run_id);
+    assert.deepEqual(report(), completedReports);
+    assert.deepEqual(fullDetails(), pinnedDetails);
+    assert.deepEqual(receipts(), originalReceipts);
+    assert.deepEqual(providerRuns(), completedReports.map(r=>r.run_id));
+    assert.equal(local.db.prepare('SELECT count(*) FROM executions WHERE run_id=?').pluck().get(original.run_id), 1);
+    const replyRun = await waitFor('completed reply to the recovered report', async () =>
+      (await client.snapshot()).runs.find(run => run.id === reply.runId && run.state === 'completed'));
+    assert.equal((await client.snapshot()).messages.find(message => message.id === replyRun.messageId)?.text, 'Saved your preference.');
+    assert.deepEqual(query('SELECT session_id FROM command_receipts WHERE run_id=?', reply.runId), [{ session_id: pairing.id }]);
     await stop(runner); await stop(server);
 
     // Now remove the matching execution from the synthetic runner only. The
@@ -301,9 +296,11 @@ test('rotated daily backup restores an acknowledged occurrence through the paire
     local.db.prepare('DELETE FROM deliveries WHERE run_id=?').run(prior.run);
     local.db.prepare('DELETE FROM executions WHERE run_id=?').run(prior.run);
     server = launch('server'); runner = launch('runner');
-    await expect(page.getByText(new RegExp(prior.run+' .*Runner has no matching execution'))).toBeVisible();
-    await expect(page.getByRole('button',{name:'Resume dispatch'})).toBeDisabled();
-    expect(query('SELECT reason FROM restore_issues WHERE run_id=?',prior.run)).toHaveLength(1);
+    await waitForServer(origin);
+    const issue = await waitFor('missing runner execution', async () => (await client.snapshot()).recovery?.issues.find(row => row.runId === prior.run));
+    assert.match(issue.reason, /no matching execution/);
+    assert.equal((await client.snapshot()).recovery?.ready, false);
+    assert.equal(query('SELECT reason FROM restore_issues WHERE run_id=?',prior.run).length, 1);
   } finally {
     for (const child of [...children].reverse()) await stop(child);
     local?.close(); rmSync(root,{recursive:true,force:true});

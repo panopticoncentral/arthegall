@@ -24,7 +24,7 @@ Use a native split view for DMs, with a selected conversation and per-conversati
 
 Implement one-time command decisions, reporting access for a run or assignment, and recurring schedule decisions. Show the actual operation or the agent, runner, tool, duration, and schedule as appropriate. Show the active and proposed schedules together when one replaces another. Refresh a request that was resolved by another client. Surface queued work, runner disconnection, provider sign-in, and uncertain execution as distinct states.
 
-**Acceptance.** Starting in the Mac app, create a reporting agent, grant access, obtain an on-demand report, and approve a daily schedule. Quit the app before delivery. Reopen, read the scheduled result, inspect coverage, and reply to that report to change a preference. Verify that the next report uses the preference and retains its own evidence. Exercise decline and stale-decision paths with a second paired client. Use the existing [reporting](../tests/reporting.spec.ts), [scheduling](../tests/scheduled.spec.ts), and [Markdown](../tests/markdown.spec.ts) scenarios as behavioral references.
+**Acceptance.** Starting in the Mac app, create a reporting agent, grant access, obtain an on-demand report, and approve a daily schedule. Quit the app before delivery. Reopen, read the scheduled result, inspect coverage, and reply to that report to change a preference. Verify that the next report uses the preference and retains its own evidence. Exercise decline and stale-decision paths with a second paired client. The [reporting](../tests/native-reporting.test.ts) and [scheduling](../tests/native-scheduled.test.ts) API tests and the [Mac window tests](mac-client.md#verification) exercise these behaviors.
 
 ## 3. Bring over Settings and recovery
 
@@ -34,7 +34,7 @@ Implement one-time command decisions, reporting access for a run or assignment, 
 | Agent and assignment settings | Navigate from the sidebar, DM, or report to the same records. Read and revise instructions with revision conflict handling. Inspect access, preferences, and history. Propose a schedule change, review it in Settings or the DM, and close an assignment while retaining its conversation. |
 | Run details and restore recovery | Read activity, pin and unpin evidence, distinguish pruned and pending details, inspect the post-restore pause and unresolved records, recheck runners, and resume when the server allows it. The operator continues to perform the database restore with the host CLI. |
 
-**Acceptance.** Repeat the [settings](../tests/settings.spec.ts) and [packaged restore drill](../tests/restore.spec.ts) through the native UI where the owner interacts with it. Use an isolated host with existing history and an already-paired client. Verify that a restored report retains its original reply target, conflicting edits require review, and the app accurately presents a paused server after relaunch.
+**Acceptance.** Exercise [settings](../tests/native-settings.test.ts) and [recovery](../tests/mac-recovery.mjs) through the native UI where the owner interacts with it. Run the [packaged restore drill](../tests/packaged-restore.test.ts) for the host operator workflow. Use an isolated host with existing history and an already-paired client. Verify that a restored report retains its original reply target, conflicting edits require review, and the app accurately presents a paused server after relaunch.
 
 ## 4. Ship the Mac app and retire the browser client
 
