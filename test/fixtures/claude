@@ -32,7 +32,8 @@ else {
       for (const frame of interruptReplay.beforeInterrupt) print(frame);
       return;
     }
-    writeFileSync("started", "yes");
+    const dirs = process.argv.indexOf("--add-dir");
+    writeFileSync("started", JSON.stringify(dirs < 0 ? [] : process.argv.slice(dirs + 1)));
     for (let i = 0; i < 200 && !existsSync("release"); i++) await delay(50);
     print({
       type: "assistant",

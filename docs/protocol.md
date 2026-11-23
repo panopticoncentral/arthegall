@@ -2,13 +2,13 @@
 
 ## Ownership
 
-The control plane assigns a session ID and a separate command ID before queuing a launch. A launch specifies one runner, one harness, an absolute working directory on that runner, and a first prompt. The runner checks the directory at execution time. Creating a native session and delivering the first prompt are separate steps.
+The control plane assigns a session ID and a separate command ID before queuing a launch. The control plane resolves the project and saves its ID, runner, primary working directory, and additional paths on the session. The launch command carries that path snapshot, the harness, and the first prompt. The runner checks every directory on its own filesystem at execution time and persists the paths for recovery. Creating a native session and delivering the first prompt are separate steps.
 
 The control plane owns submission order and command status. The runner owns its local session registry, native references, delivery journal, and observed activity. It adopts only sessions it created. Each adapter translates native activity, checks whether input is safe, and recovers as much history as its harness exposes.
 
 ## Identity and connection
 
-The shared wire contract defines and validates both directions of the JSON protocol. The challenge and identification advertise `protocolVersion` and `features`. Welcome confirms the selected features. Protocol 1 supports legacy unversioned messages. An unversioned welcome with `replayPartBytes` supports multipart events. Without that field, ordinary replay uses the original message limit. If a single event exceeds that limit the runner preserves its journal, reports which host needs updating, and periodically retries. Incompatible explicit versions close with code 4002 before replay or dispatch.
+The shared wire contract defines and validates both directions of the JSON protocol. The challenge and identification advertise `protocolVersion` and `features`. Welcome confirms the selected features. A runner advertising `project-paths` accepts an `additionalDirs` array on launches. Launches, follow-ups, and steering for sessions with additional paths wait with an upgrade message while a legacy runner is connected. Protocol 1 supports legacy unversioned messages. An unversioned welcome with `replayPartBytes` supports multipart events. Without that field, ordinary replay uses the original message limit. If a single event exceeds that limit the runner preserves its journal, reports which host needs updating, and periodically retries. Incompatible explicit versions close with code 4002 before replay or dispatch.
 
 One installation connects outbound over a TLS WebSocket at `/runner`. The control plane issues a fresh random challenge. The runner signs a protocol-specific challenge string with its Ed25519 private key. An unknown key receives a five-minute pairing code. The operator confirms the code through the control plane's owner-only local socket. Approval binds the public key to an assigned runner ID. If the pairing reply is lost, the same key recovers that ID on reconnect.
 

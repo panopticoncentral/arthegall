@@ -147,6 +147,7 @@ export class ClaudeAdapter {
       s.hasHistory ? "--resume" : "--session-id",
       s.native,
     ];
+    if (s.additionalDirs?.length) args.push("--add-dir", ...s.additionalDirs);
     const child = spawn("claude", args, {
       cwd: s.cwd,
       stdio: ["pipe", "pipe", "pipe"],

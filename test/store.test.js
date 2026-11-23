@@ -108,3 +108,49 @@ test("control plane upgrade preserves queue order and acknowledged history", (t)
   }
   assert.throws(() => new RunnerStore(dir), /belongs to the control plane/);
 });
+
+test("existing sessions and launch schedules acquire one persistent project per runner and path", (t) => {
+  const dir = legacyDirectory(
+    t,
+    "control plane",
+    [
+      [
+        "session",
+        "s",
+        { id: "s", runner: "r", cwd: "/work/./", state: "ready" },
+      ],
+      [
+        "session",
+        "bad",
+        { id: "bad", runner: "r", cwd: "/bad\0path", state: "failed" },
+      ],
+    ],
+    "r",
+  );
+  const db = new DatabaseSync(join(dir, "state.sqlite"));
+  db.exec("CREATE TABLE schedules (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  db.prepare("INSERT INTO schedules VALUES (?,?)").run(
+    "job",
+    JSON.stringify({
+      id: "job",
+      target: { op: "launch", runner: "r", cwd: "/work", harness: "codex" },
+    }),
+  );
+  db.close();
+  const store = new ControlStore(dir);
+  const [project] = store.projects.list();
+  assert.equal(store.projects.list().length, 1);
+  assert.equal(store.sessions.get("s").cwd, "/work/./");
+  assert.equal(store.sessions.get("s").project, project.id);
+  assert.equal(store.sessions.get("bad").state, "failed");
+  assert.equal(store.sessions.get("bad").project, undefined);
+  assert.deepEqual(store.schedules.get("job").target, {
+    op: "launch",
+    project: project.id,
+    harness: "codex",
+  });
+  store.db.close();
+  const reopened = new ControlStore(dir);
+  assert.deepEqual(reopened.projects.list(), [project]);
+  reopened.db.close();
+});

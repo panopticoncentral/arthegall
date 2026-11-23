@@ -200,6 +200,7 @@ export class Runner {
         id: c.session,
         harness: c.harness,
         cwd: c.cwd,
+        additionalDirs: c.additionalDirs ?? [],
         state: "new",
         approvals: [],
         turn: null,
@@ -255,8 +256,10 @@ export class Runner {
             ?.find((h) => h.name === c.harness);
           if (installed?.status === "unavailable")
             throw Error(installed.detail);
-          if (!statSync(c.cwd).isDirectory())
-            throw Error("working directory does not exist");
+          for (const path of [s.cwd, ...(s.additionalDirs ?? [])]) {
+            if (!statSync(path).isDirectory())
+              throw Error("expected a directory: " + path);
+          }
           this.update(s, { state: "starting" });
           await this.adapter(s).create();
         }

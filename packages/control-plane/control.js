@@ -70,31 +70,65 @@ export class Control {
     );
     return s;
   }
-  validateLaunch(a) {
+  launchProject(a) {
+    let project;
+    if (a.project !== undefined) {
+      project = requireValue(
+        this.store.projects.get(a.project),
+        "unknown project",
+      );
+    } else {
+      requireValue(this.store.runners.get(a.runner), "unknown runner");
+      project = this.store.projects.forDirectory(a.runner, a.cwd);
+    }
+    requireValue(!project.archived, "project is archived");
     const runner = requireValue(
-      this.store.runners.get(a.runner),
+      this.store.runners.get(project.runner),
       "unknown runner",
     );
     requireValue(
       runner.harnesses?.some((h) => h.name === a.harness),
       "runner has not advertised this harness",
     );
-    requireValue(
-      typeof a.cwd === "string" && a.cwd.startsWith("/") && a.text?.trim(),
-      "expected harness, absolute working directory and prompt",
-    );
+    requireValue(typeof a.text === "string" && a.text.trim(), "empty prompt");
+    return project;
   }
   apply(op, a, commandId) {
+    const projects = this.store.projects;
+    if (op === "project-add") {
+      requireValue(this.store.runners.get(a.runner), "unknown runner");
+      return projects.define({
+        runner: a.runner,
+        name: a.name,
+        cwd: a.cwd,
+        additionalDirs: a.additionalDirs,
+      });
+    }
+    if (op === "project-edit" || op === "project-archive") {
+      const p = projects.require(a.id);
+      if (op === "project-archive")
+        return projects.put(p.id, { ...p, archived: true });
+      requireValue(!p.archived, "project is archived");
+      return projects.define({
+        id: p.id,
+        runner: p.runner,
+        name: a.name,
+        cwd: a.cwd,
+        additionalDirs: a.additionalDirs,
+      });
+    }
     if (op === "schedule-create") return this.scheduler.create(a);
     if (op === "schedule-edit") return this.scheduler.edit(a);
     if (op === "schedule-cancel") return this.scheduler.cancel(a.id);
     if (op === "launch") {
-      this.validateLaunch(a);
+      const project = this.launchProject(a);
       const s = {
         id: randomUUID(),
-        runner: a.runner,
+        project: project.id,
+        runner: project.runner,
         harness: a.harness,
-        cwd: a.cwd,
+        cwd: project.cwd,
+        additionalDirs: project.additionalDirs,
         state: "new",
         closing: false,
       };
@@ -104,7 +138,9 @@ export class Control {
         "launch",
         {
           text: a.text,
-          cwd: a.cwd,
+          project: s.project,
+          cwd: s.cwd,
+          additionalDirs: s.additionalDirs,
           harness: a.harness,
         },
         commandId,
@@ -308,7 +344,7 @@ export class Control {
       }
     });
   }
-  dispatch(runner, sent) {
+  dispatch(runner, sent, supportsProjectPaths = true) {
     const cmds = this.store.commands
       .list()
       .filter((c) => c.runner === runner && open.has(c.status));
@@ -341,8 +377,20 @@ export class Control {
         )
           continue;
       }
+      if (
+        !supportsProjectPaths &&
+        s.additionalDirs?.length &&
+        (isPromptCommand(c.type) || c.type === "steer")
+      ) {
+        const detail =
+          "Update the runner to send input to sessions with additional project paths";
+        if (c.detail !== detail)
+          this.store.commands.put(c.id, { ...c, detail });
+        continue;
+      }
       if (c.status === "queued") {
         this.store.transaction(() => {
+          delete c.detail;
           c.status = "dispatching";
           this.store.commands.put(c.id, c);
           if (isPromptCommand(c.type)) {

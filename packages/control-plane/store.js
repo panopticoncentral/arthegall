@@ -1,8 +1,16 @@
 import { JsonTable, SQLiteState } from "@arthegall/shared/sqlite";
+import { Projects, migrateProjectMembership } from "./projects.js";
 
 function initialize(db, legacy) {
+  const existingProjects = db
+    .prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='projects'",
+    )
+    .get();
   db.exec(`
     CREATE TABLE IF NOT EXISTS runners (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE UNIQUE INDEX IF NOT EXISTS project_workspace ON projects(json_extract(value,'$.runner'),json_extract(value,'$.cwd'));
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS operator_requests (id TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -38,11 +46,13 @@ function initialize(db, legacy) {
     INSERT INTO commands SELECT id,value FROM records WHERE kind='command' ORDER BY rowid;
     DROP TABLE records;
   `);
+  if (!existingProjects) migrateProjectMembership(db);
 }
 
 export class ControlStore extends SQLiteState {
   constructor(dir) {
     super(dir, "control plane", initialize);
+    this.projects = new Projects(this.db);
     this.schedules = new JsonTable(this.db, "schedules");
     this.requests = new JsonTable(this.db, "operator_requests");
     this.runners = new JsonTable(this.db, "runners");

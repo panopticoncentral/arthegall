@@ -179,3 +179,34 @@ test("Claude worker exit leaves stop uncertain across restart and the next promp
   );
   assert.equal(f.dispatch()[0].id, next.id);
 });
+
+test("Codex receives the session workspace on start and resume", async () => {
+  const s = { cwd: "/server", additionalDirs: ["/client", "/shared"] };
+  const roots = [s.cwd, ...s.additionalDirs];
+  const adapter = new CodexAdapter({
+    s,
+    update: (patch) => Object.assign(s, patch),
+  });
+  adapter.connect = async () => {};
+  const methods = [];
+  adapter.call = async (method, params) => {
+    methods.push(method);
+    if (method === "thread/turns/list") return { data: [], nextCursor: null };
+    assert.equal(params.cwd, s.cwd);
+    assert.deepEqual(params.runtimeWorkspaceRoots, roots);
+    if (method === "thread/resume") assert.equal(params.threadId, "native");
+    return {
+      thread: { id: "native", status: { type: "idle" } },
+      runtimeWorkspaceRoots: roots,
+    };
+  };
+  await adapter.create();
+  await adapter.recover();
+  assert.deepEqual(methods, [
+    "thread/start",
+    "thread/resume",
+    "thread/turns/list",
+  ]);
+  adapter.call = async () => ({ thread: { id: "unsupported" } });
+  await assert.rejects(adapter.create(), /did not accept/);
+});

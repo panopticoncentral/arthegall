@@ -11,7 +11,11 @@ export const replayPartBytes = 256 * 1024;
 // shipped either before or after replayPartBytes was introduced.
 export const protocolVersion = 1;
 export const replayFeature = "event-parts";
-export const protocolOffer = { protocolVersion, features: [replayFeature] };
+export const projectPathsFeature = "project-paths";
+export const protocolOffer = {
+  protocolVersion,
+  features: [replayFeature, projectPathsFeature],
+};
 
 const text = (value) => typeof value === "string";
 const id = (value) => text(value) && value.length > 0;
@@ -38,7 +42,12 @@ const receiptStatuses = [
   "canceled",
 ];
 const commandFields = {
-  launch: (c) => id(c.harness) && id(c.cwd) && text(c.text),
+  launch: (c) =>
+    id(c.harness) &&
+    id(c.cwd) &&
+    text(c.text) &&
+    (c.additionalDirs === undefined ||
+      list(c.additionalDirs, (p) => id(p) && p.startsWith("/"))),
   prompt: (c) => text(c.text),
   steer: (c) => id(c.target) && text(c.text),
   stop: (c) => id(c.target),

@@ -4,7 +4,7 @@ Arthegall runs coding sessions on machines you own. A command-line control plane
 
 ## Install by machine role
 
-Arthegall uses one npm workspace with two programs. Both run on macOS or Linux with Node.js 24.13 or later. Each program depends on `@arthegall/shared`, which contains the pairing challenge format, prompt command classification, SQLite helpers, and process lock. Each program owns its database schema. The control plane stores the command queue and session history. Each runner stores its harness sessions, command receipts, and local event journal.
+Arthegall uses one npm workspace with two programs. Both run on macOS or Linux with Node.js 24.13 or later. Each program depends on `@arthegall/shared`, which contains the pairing challenge format, prompt command classification, SQLite helpers, and process lock. Each program owns its database schema. The control plane stores projects, the command queue, and session history. Each runner stores its harness sessions, command receipts, and local event journal.
 
 | Machine | Package and executable | Local requirements |
 |---|---|---|
@@ -65,12 +65,30 @@ arthegall runners
 
 The runner listing reports `connectionState`. A connected runner first shows `catching_up` while it replays activity and reconciles commands, then `ready` when dispatch can resume. A paired runner can also show `offline` or `incompatible` with an upgrade hint.
 
-Start a session in an existing directory on the runner. Replace `RUNNER_ID` with the ID printed during pairing. The returned command has an `id` for the command and a `session` ID for the conversation.
+## Projects and sessions
+
+Add a project on a paired runner. Supply a display name, an absolute primary directory on that machine, and any additional directories the harness should receive. Use the returned project ID for launches. The launch returns both a command ID and a session ID.
 
 ```sh
-arthegall launch RUNNER_ID codex "$PWD" "Explain what this project does."
+arthegall project add RUNNER_ID "Example" /work/server /work/client /work/shared
+arthegall launch PROJECT_ID codex "Explain how the server and client fit together."
+arthegall sessions PROJECT_ID
 arthegall history SESSION_ID --follow
 ```
+
+The primary directory is the session’s working directory. Each session keeps its own conversation and a snapshot of all launch paths. The runner checks the directories when it launches the session. Codex receives the workspace roots and Claude receives the additional directories through `--add-dir`.
+
+| Project operation | Command |
+|---|---|
+| List projects, including archived ones | `arthegall project list` |
+| Replace the name and complete path list | `arthegall project edit PROJECT_ID "New name" /work/server /work/shared` |
+| Archive a project | `arthegall project archive PROJECT_ID` |
+
+Adding the same normalized primary path on the same runner returns its existing project, restoring it if archived. The saved name and additional paths are preserved. Paths are normalized lexically on the control plane, so symlink aliases can identify distinct projects. Additional directories can belong to multiple projects.
+
+Edits apply to future sessions, including sessions created by future schedule occurrences. Archiving blocks new launches. Existing sessions and queued launches keep their saved paths. While the project is archived, scheduled launch attempts record a failed occurrence. Adding the project again allows later occurrences to run.
+
+On upgrade, existing sessions and launch schedules gain a project for their runner and primary path. The original `launch RUNNER_ID HARNESS DIRECTORY "PROMPT"` form still works, including in schedules. It resolves or creates the project for that runner and directory.
 
 Use `claude` as the harness name to start a Claude Code session. The history command prints JSON lines in follow mode. Ctrl-C stops the viewer. The session continues on its machine.
 
@@ -88,7 +106,7 @@ Use `claude` as the harness name to start a Claude Code session. The history com
 
 The `steering` field shows `native` for a live Codex turn, `callback` for a controlled Claude turn, and `unavailable` when steering cannot currently be delivered. Older runners may omit this field. Use the `turn` from `sessions` when issuing a steer. Codex accepts it through its App Server. Claude picks it up after a tool returns or when it is about to finish the turn. If the target ends before delivery, the command reports failure. Use `send` when you want a new turn.
 
-Session actions accept an optional `--command-id` (UUID v4). Generate it before submission if a script must survive a lost reply. Retry the same action and arguments with the same ID to recover the original response, including the original session ID for a launch. Use a fresh ID for a second intentional submission. The CLI generates an ID by default and prints it on request failure. Read current delivery status with `arthegall commands SESSION_ID`.
+Project and session actions accept an optional `--command-id` (UUID v4). Generate it before submission if a script must survive a lost reply. Retry the same action and arguments with the same ID to recover the original response, including the original session ID for a launch. Use a fresh ID for a second intentional submission. The CLI generates an ID by default and prints it on request failure. Read current delivery status with `arthegall commands SESSION_ID`.
 
 ## Schedule sessions and follow-ups
 
@@ -96,7 +114,7 @@ The control plane keeps schedules in its SQLite database. Use a scheduled `send`
 
 ```sh
 arthegall schedule create send SESSION_ID "Check whether the build finished" --in 5m
-arthegall schedule create launch RUNNER_ID codex /work/project "Review yesterday's activity" \
+arthegall schedule create launch PROJECT_ID codex "Review yesterday's activity" \
   --time 08:00 --days weekdays --zone America/Los_Angeles --missed backfill
 arthegall schedule list
 arthegall schedule history SCHEDULE_ID

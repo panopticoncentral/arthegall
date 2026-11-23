@@ -177,12 +177,14 @@ test("paired runner journals model activity across a control-plane outage and re
       (h) => h.name === "claude" && h.status === "available",
     ),
   );
+  const extra = [join(root, "shared lib"), join(root, "client")];
+  for (const path of extra) mkdirSync(path);
+  const project = await command("project", "add", id, "Example", cwd, ...extra);
   const launchId = randomUUID();
   const launchArgs = [
     "launch",
-    id,
+    project.id,
     "claude",
-    cwd,
     "Synthetic prompt",
     "--command-id",
     launchId,
@@ -194,11 +196,24 @@ test("paired runner journals model activity across a control-plane outage and re
   assert.deepEqual(duplicate, first);
   assert.equal(first.id, launchId);
   await assert.rejects(
-    command("launch", id, "claude", cwd, "Different", "--command-id", launchId),
+    command(
+      "launch",
+      project.id,
+      "claude",
+      "Different",
+      "--command-id",
+      launchId,
+    ),
     /different input/,
   );
-  assert.equal((await command("sessions")).length, 1);
+  assert.deepEqual(
+    (await command("sessions", project.id)).map((s) => s.id),
+    [first.session],
+  );
+  assert.equal((await command("project", "list"))[0].id, project.id);
   await until(() => existsSync(join(cwd, "started")));
+  assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), extra);
+  await command("project", "edit", project.id, "Renamed", cwd, extra[1]);
   await until(
     async () =>
       (await command("sessions")).find((s) => s.id === first.session)
@@ -234,7 +249,11 @@ test("paired runner journals model activity across a control-plane outage and re
     "delivered",
   );
   assert.deepEqual(await command(...launchArgs), first);
-  assert.equal((await command("sessions")).length, 1);
+  assert.deepEqual(
+    (await command("sessions", project.id)).map((s) => s.id),
+    [first.session],
+  );
+  assert.equal((await command("project", "list"))[0].id, project.id);
   const [connected] = await command("runners");
   assert.equal(connected.connectionState, "ready");
   assert.equal(
@@ -259,6 +278,7 @@ test("paired runner journals model activity across a control-plane outage and re
     return rows[0]?.status === "finished" && rows;
   });
   assert.equal(occurrence.session, first.session);
+  assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), extra);
   const followup = (await command("commands", first.session)).find(
     (c) => c.id === occurrence.command,
   );
@@ -277,9 +297,8 @@ test("paired runner journals model activity across a control-plane outage and re
     "schedule",
     "create",
     "launch",
-    id,
+    project.id,
     "claude",
-    cwd,
     "Write a fresh report",
     "--in",
     "1s",
@@ -294,6 +313,7 @@ test("paired runner journals model activity across a control-plane outage and re
     return row?.status === "finished" && row;
   });
   assert.equal(finished.command, queued.command);
+  assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), [extra[1]]);
   assert.equal(finished.commandStatus, "delivered");
   assert.notEqual(finished.session, first.session);
   assert.equal((await command("commands", finished.session)).length, 1);

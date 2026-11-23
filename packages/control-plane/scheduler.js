@@ -25,12 +25,11 @@ export class Scheduler {
     const rule = timing(a, now);
     let target;
     if (a.target === "launch") {
-      this.control.validateLaunch(a);
+      const project = this.control.launchProject(a);
       target = {
         op: "launch",
-        runner: a.runner,
+        project: project.id,
         harness: a.harness,
-        cwd: a.cwd,
       };
     } else if (a.target === "send") {
       this.control.openSession(a.session);

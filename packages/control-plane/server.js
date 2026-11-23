@@ -17,6 +17,7 @@ import { ControlStore } from "./store.js";
 import { IncomingEvent } from "./replay.js";
 import {
   protocolOffer,
+  projectPathsFeature,
   replayFeature,
   versionIssue,
   decodeRunnerMessage,
@@ -80,7 +81,11 @@ export function serve(dir, opt) {
   }
   function pump(peer) {
     if (!peer.ready || live.get(peer.id) !== peer) return;
-    for (const command of control.dispatch(peer.id, peer.sent))
+    for (const command of control.dispatch(
+      peer.id,
+      peer.sent,
+      peer.projectPaths,
+    ))
       send(peer, { op: "command", command });
   }
   function tick(peer) {
@@ -104,7 +109,10 @@ export function serve(dir, opt) {
       runner: r.id,
       seq: store.sequence(r.id),
       ...protocolOffer,
-      features: peer.parts ? [replayFeature] : [],
+      features: [
+        ...(peer.parts ? [replayFeature] : []),
+        ...(peer.projectPaths ? [projectPathsFeature] : []),
+      ],
       ...(peer.parts ? { replayPartBytes } : {}),
     });
   }
@@ -180,6 +188,8 @@ export function serve(dir, opt) {
             socket.close(4002, issue);
             return;
           }
+          peer.projectPaths =
+            m.features?.includes(projectPathsFeature) === true;
           peer.parts =
             m.protocolVersion === undefined ||
             m.features?.includes(replayFeature);
@@ -313,9 +323,11 @@ export function serve(dir, opt) {
                 : "offline",
           };
         });
+      else if (op === "project-list") result = store.projects.list();
       else if (op === "sessions")
         result = store.sessions
           .list()
+          .filter((s) => a.project === undefined || s.project === a.project)
           .map((s) =>
             s.closing && s.state !== "ended"
               ? { ...s, activity: s.state, state: "ending" }

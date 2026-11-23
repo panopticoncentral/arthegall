@@ -129,15 +129,35 @@ export class CodexAdapter {
       }
     });
   }
+  workspaceParams() {
+    const { cwd, additionalDirs } = this.ctx.s;
+    return additionalDirs?.length
+      ? { cwd, runtimeWorkspaceRoots: [cwd, ...additionalDirs] }
+      : {};
+  }
+  verifyWorkspace(response) {
+    if (
+      this.ctx.s.additionalDirs?.some(
+        (path) => !response.runtimeWorkspaceRoots?.includes(path),
+      )
+    ) {
+      this.close();
+      throw Error(
+        "Codex did not accept the additional workspace roots. Check the installed Codex version.",
+      );
+    }
+  }
   async create() {
     await this.connect();
     const r = await this.call("thread/start", {
       cwd: this.ctx.s.cwd,
+      ...this.workspaceParams(),
       historyMode: "paginated",
       sandbox: "workspace-write",
       approvalPolicy: "on-request",
       approvalsReviewer: "user",
     });
+    this.verifyWorkspace(r);
     this.ctx.update({ native: r.thread.id, state: "ready" });
   }
   async recover() {
@@ -149,7 +169,9 @@ export class CodexAdapter {
     const r = await this.call("thread/resume", {
       threadId,
       excludeTurns: true,
+      ...this.workspaceParams(),
     });
+    this.verifyWorkspace(r);
     let cursor = null,
       active = null,
       lastTurn = null;

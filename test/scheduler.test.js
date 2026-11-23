@@ -411,3 +411,100 @@ test("upgrading an existing scheduler preserves queued commands and backfill on 
   assert.deepEqual(rows.slice(0, 2), original);
   assert.equal(rows[2].due, new Date(monday + 2 * day).toISOString());
 });
+
+test("project identity, snapshots and scheduled launches survive edits and restart", (t) => {
+  const f = fixture(t);
+  const act = (op, args) => f.control.action(op, args);
+  const definition = {
+    runner: "r",
+    name: "Example",
+    cwd: "/work/server/./",
+    additionalDirs: ["/work/client", "/work/lib/", "/work/lib", "/work/server"],
+  };
+  const p = act("project-add", definition);
+  assert.deepEqual(p.additionalDirs, ["/work/client", "/work/lib"]);
+  assert.equal(p.cwd, "/work/server");
+  assert.deepEqual(
+    act("project-add", { ...definition, name: "Other", cwd: p.cwd }),
+    p,
+  );
+  assert.throws(
+    () => act("project-add", { ...definition, additionalDirs: ["relative"] }),
+    /absolute/,
+  );
+  const other = act("project-add", { ...definition, cwd: "/work/other" });
+  assert.throws(
+    () => act("project-edit", { ...definition, id: other.id }),
+    /another project/,
+  );
+  f.control.store.runners.put("r2", { id: "r2", harnesses: [] });
+  assert.notEqual(act("project-add", { ...definition, runner: "r2" }).id, p.id);
+
+  const args = { project: p.id, harness: "codex", text: "first" };
+  const first = act("launch", args);
+  assert.deepEqual(f.control.dispatch("r", new Set(), false), []);
+  assert.match(f.control.command(first.id).detail, /Update the runner/);
+  const schedule = f.create({ ...args, target: "launch", ...weekly });
+  const updated = act("project-edit", {
+    id: p.id,
+    name: "Renamed",
+    cwd: "/new",
+    additionalDirs: ["/lib2"],
+  });
+  f.restart();
+  assert.deepEqual(f.control.store.projects.get(p.id), updated);
+  assert.equal(f.control.session(first.session).cwd, p.cwd);
+  assert.deepEqual(
+    f.control.session(first.session).additionalDirs,
+    p.additionalDirs,
+  );
+  assert.deepEqual(f.dispatch()[0].additionalDirs, p.additionalDirs);
+  f.tick(monday);
+  const [row] = f.history(schedule.id);
+  assert.equal(f.control.command(row.command).project, p.id);
+  assert.equal(f.control.command(row.command).cwd, "/new");
+  assert.deepEqual(f.control.command(row.command).additionalDirs, ["/lib2"]);
+
+  act("project-archive", { id: p.id });
+  assert.throws(() => act("launch", args), /archived/);
+  assert.equal(
+    act("send", { session: first.session, text: "more" }).session,
+    first.session,
+  );
+  f.tick(monday + day);
+  const archived = f.history(schedule.id).at(-1);
+  assert.equal(archived.status, "failed");
+  assert.equal(archived.detail, "project is archived");
+  assert.deepEqual(act("project-add", { ...definition, cwd: "/new" }), updated);
+  f.tick(monday + 2 * day);
+  assert.equal(f.history(schedule.id).at(-1).status, "queued");
+});
+
+test("follow-ups on a multi-directory session wait through a runner downgrade", (t) => {
+  const f = fixture(t);
+  const project = f.control.action("project-add", {
+    runner: "r",
+    name: "Example",
+    cwd: "/work",
+    additionalDirs: ["/shared"],
+  });
+  const first = f.control.action("launch", {
+    project: project.id,
+    harness: "codex",
+    text: "start",
+  });
+  f.dispatch();
+  f.event(first.session, {
+    type: "receipt",
+    command: first.id,
+    status: "delivered",
+  });
+  f.event(first.session, { type: "session", state: "ready" });
+  const next = f.control.action("send", {
+    session: first.session,
+    text: "continue",
+  });
+  assert.deepEqual(f.control.dispatch("r", new Set(), false), []);
+  assert.equal(f.control.command(next.id).status, "queued");
+  assert.equal(f.dispatch()[0].id, next.id);
+});

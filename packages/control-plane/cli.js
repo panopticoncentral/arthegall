@@ -10,22 +10,25 @@ process.umask(0o077);
 const help = `arthegall serve [--dir DIR] [--listen ADDRESS] [--port PORT] [--name TLS_HOSTNAME]
                [--cert CERT --key PRIVATE_KEY]
 arthegall pair CODE
-arthegall runners | sessions
-arthegall launch RUNNER HARNESS ABSOLUTE_DIRECTORY "FIRST PROMPT"
+arthegall runners | sessions [PROJECT]
+arthegall project add RUNNER NAME PRIMARY_PATH [ADDITIONAL_PATH ...]
+arthegall project edit PROJECT NAME PRIMARY_PATH [ADDITIONAL_PATH ...]
+arthegall project list | project archive PROJECT
+arthegall launch PROJECT HARNESS "FIRST PROMPT"
 arthegall send SESSION "FOLLOW-UP"
 arthegall steer SESSION TURN "UPDATED INSTRUCTION"
 arthegall commands [SESSION] | history SESSION [--after SEQUENCE] [--follow]
 arthegall approve SESSION REQUEST | deny SESSION REQUEST
 arthegall cancel COMMAND | stop SESSION TURN | end SESSION
 
-arthegall schedule create launch RUNNER HARNESS ABSOLUTE_DIRECTORY "PROMPT" TIMING
+arthegall schedule create launch PROJECT HARNESS "PROMPT" TIMING
 arthegall schedule create send SESSION "FOLLOW-UP" TIMING
 arthegall schedule edit SCHEDULE TIMING | schedule cancel SCHEDULE
 arthegall schedule list | schedule history SCHEDULE
 TIMING: --in 5m | --at ISO_TIMESTAMP_WITH_OFFSET | --time HH:MM [--days weekdays|daily|mon,wed,...]
         [--zone America/Los_Angeles] [--missed latest|backfill (recurring only)]
 
-Session and schedule actions accept --command-id UUID for retrying the same request.
+Project, session and schedule actions accept --command-id UUID for retrying the same request.
 Operator commands use --dir DIR or ARTHEGALL_CONTROL_DIR to locate the local control plane.`;
 function request(dir, data) {
   return new Promise((resolve, reject) => {
@@ -87,6 +90,7 @@ try {
     calendar[key] = o[key];
   }
   let target;
+  if (op === "project") op = "project-" + p.shift();
   if (op === "schedule") {
     op = "schedule-" + p.shift();
     if (op === "schedule-create") {
@@ -104,22 +108,33 @@ try {
   else if (op === "serve") {
     if (!!o.cert !== !!o.key) throw Error("supply --cert and --key together");
     if (o["command-id"])
-      throw Error("--command-id requires a session or schedule action");
+      throw Error(
+        "--command-id requires a project, session or schedule action",
+      );
     serve(dir, o);
   } else {
+    // Older clients specify the runner and primary directory directly.
+    const launchKeys =
+      p.length === 4
+        ? ["runner", "harness", "cwd", "text"]
+        : ["project", "harness", "text"];
+    const paths = ["project-add", "project-edit"].includes(op)
+      ? p.splice(3)
+      : null;
     const forms = {
-      "schedule-create":
-        target === "send"
-          ? ["session", "text"]
-          : ["runner", "harness", "cwd", "text"],
+      "project-list": [],
+      "project-add": ["runner", "name", "cwd"],
+      "project-edit": ["id", "name", "cwd"],
+      "project-archive": ["id"],
+      "schedule-create": target === "send" ? ["session", "text"] : launchKeys,
       "schedule-edit": ["id"],
       "schedule-list": [],
       "schedule-history": ["id"],
       "schedule-cancel": ["id"],
       pair: ["code"],
       runners: [],
-      sessions: [],
-      launch: ["runner", "harness", "cwd", "text"],
+      sessions: p.length ? ["project"] : [],
+      launch: launchKeys,
       send: ["session", "text"],
       steer: ["session", "turn", "text"],
       commands: p.length ? ["session"] : [],
@@ -133,9 +148,11 @@ try {
     const keys = forms[op];
     if (!Array.isArray(keys) || keys.length !== p.length) throw Error(help);
     const args = Object.fromEntries(keys.map((k, i) => [k, p[i]]));
+    if (paths) args.additionalDirs = paths;
     if (target) args.target = target;
     Object.assign(args, calendar);
     const action = ![
+      "project-list",
       "schedule-list",
       "schedule-history",
       "pair",
@@ -145,7 +162,9 @@ try {
       "history",
     ].includes(op);
     if (!action && o["command-id"] !== undefined)
-      throw Error("--command-id requires a session or schedule action");
+      throw Error(
+        "--command-id requires a project, session or schedule action",
+      );
     if (action) args.commandId = o["command-id"] ?? randomUUID();
     if (o.after) args.after = Number(o.after);
     if (o.after && (!Number.isSafeInteger(args.after) || args.after < 0))
