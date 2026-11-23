@@ -1,0 +1,12 @@
+{
+  "beforeInterrupt": [
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "content": [{ "type": "text", "text": "Working on the first prompt." }]
+      }
+    }
+  ],
+  "onInterrupt": "exit-before-response"
+}

@@ -1,0 +1,42 @@
+{
+  "initialize": [{ "result": {} }],
+  "thread/resume": [
+    {
+      "method": "item/commandExecution/requestApproval",
+      "id": 17,
+      "params": { "threadId": "thread", "turnId": "turn", "itemId": "tool" }
+    },
+    {
+      "result": { "thread": { "id": "thread", "status": { "type": "active" } } }
+    }
+  ],
+  "thread/turns/list": [
+    {
+      "result": {
+        "data": [
+          {
+            "id": "turn",
+            "status": "inProgress",
+            "items": [
+              { "id": "tool", "type": "commandExecution", "command": "pwd" }
+            ]
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  ],
+  "approvalReply": [
+    {
+      "method": "serverRequest/resolved",
+      "params": { "threadId": "thread", "requestId": 17 }
+    },
+    {
+      "method": "turn/completed",
+      "params": {
+        "threadId": "thread",
+        "turn": { "id": "turn", "status": "completed" }
+      }
+    }
+  ]
+}

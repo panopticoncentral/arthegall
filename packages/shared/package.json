@@ -1,0 +1,13 @@
+{
+  "name": "@arthegall/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.13.0"
+  },
+  "exports": {
+    "./protocol": "./protocol.js",
+    "./sqlite": "./sqlite.js"
+  }
+}

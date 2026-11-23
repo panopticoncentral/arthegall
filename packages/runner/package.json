@@ -1,0 +1,16 @@
+{
+  "name": "@arthegall/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.13.0"
+  },
+  "bin": {
+    "arthegall-runner": "./cli.js"
+  },
+  "dependencies": {
+    "@arthegall/shared": "0.1.0",
+    "ws": "8.23.0"
+  }
+}

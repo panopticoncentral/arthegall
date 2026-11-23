@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+// Synthetic harness for the network-outage test. Never calls a model.
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+if (process.argv.includes("--version")) console.log("fixture");
+else if (process.argv.includes("--help"))
+  console.log("--replay-user-messages --input-format --permission-prompts");
+else {
+  const interruptReplay = process.env.FIXTURE_CLAUDE_INTERRUPT && JSON.parse(readFileSync(process.env.FIXTURE_CLAUDE_INTERRUPT,"utf8"));
+  const print = (msg) => console.log(JSON.stringify(msg));
+  createInterface({ input: process.stdin }).on("line", async (line) => {
+    const msg = JSON.parse(line);
+    if (
+      msg.type === "control_request" &&
+      msg.request.subtype === "initialize"
+    ) {
+      print({
+        type: "control_response",
+        response: {
+          request_id: msg.request_id,
+          subtype: "success",
+          response: {},
+        },
+      });
+      return;
+    }
+    if (interruptReplay && msg.request?.subtype === "interrupt" && interruptReplay.onInterrupt === "exit-before-response") process.exit(0);
+    print(msg);
+    if (interruptReplay) {
+      for (const frame of interruptReplay.beforeInterrupt) print(frame);
+      return;
+    }
+    writeFileSync("started", "yes");
+    for (let i = 0; i < 200 && !existsSync("release"); i++) await delay(50);
+    print({
+      type: "assistant",
+      uuid: randomUUID(),
+      message: { content: [{ type: "text", text: "回答🐟".repeat(30000) }] },
+    });
+    print({
+      type: "result",
+      subtype: "success",
+      uuid: randomUUID(),
+      result: "Recovered answer",
+    });
+  });
+}

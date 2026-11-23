@@ -1,0 +1,46 @@
+# Runner and control-plane protocol
+
+## Ownership
+
+The control plane assigns a session ID and a separate command ID before queuing a launch. A launch specifies one runner, one harness, an absolute working directory on that runner, and a first prompt. The runner checks the directory at execution time. Creating a native session and delivering the first prompt are separate steps.
+
+The control plane owns submission order and command status. The runner owns its local session registry, native references, delivery journal, and observed activity. It adopts only sessions it created. Each adapter translates native activity, checks whether input is safe, and recovers as much history as its harness exposes.
+
+## Identity and connection
+
+The shared wire contract defines and validates both directions of the JSON protocol. The challenge and identification advertise `protocolVersion` and `features`. Welcome confirms the selected features. Protocol 1 supports legacy unversioned messages. An unversioned welcome with `replayPartBytes` supports multipart events. Without that field, ordinary replay uses the original message limit. If a single event exceeds that limit the runner preserves its journal, reports which host needs updating, and periodically retries. Incompatible explicit versions close with code 4002 before replay or dispatch.
+
+One installation connects outbound over a TLS WebSocket at `/runner`. The control plane issues a fresh random challenge. The runner signs a protocol-specific challenge string with its Ed25519 private key. An unknown key receives a five-minute pairing code. The operator confirms the code through the control plane's owner-only local socket. Approval binds the public key to an assigned runner ID. If the pairing reply is lost, the same key recovers that ID on reconnect.
+
+A newly authenticated connection supersedes any previous connection for that identity. The display name can identify the machine to its operator. The key identifies the installation to the protocol. Reinstallation with a lost key creates a new identity. Previously queued work remains with its original identity.
+
+The control plane pings an idle connection after 15 seconds. Inbound traffic or a pong updates last-seen time. A close marks the runner offline immediately. Silence for 45 seconds causes the server to terminate the connection. The runner retries with increasing delays and jitter. A network outage leaves its harness subscriptions and local journal active.
+
+## Replay and delivery
+
+1. The control plane supplies its last contiguous, durably stored event sequence in `welcome`.
+2. The runner sends ordered batches from its local SQLite journal. The control plane stores a batch and applies its state changes in one transaction before acknowledging. A repeated sequence is harmless. The runner measures the encoded byte length of each batch. For a single oversized event it sends `eventStart` with the sequence and byte length, then sends one binary part per `eventContinue`. The control plane reassembles the event on that connection and acknowledges the sequence after commit. A disconnect discards the partial transfer and replay starts from the last committed sequence. Item snapshots carry native item IDs so a client can update the original tool call with its eventual output.
+3. At `ready` the runner advertises harnesses and versions. It also reports inventory changes while connected. The control plane validates launches against that runner’s most recently advertised harness names. Each adapter’s availability check inspects the installed CLI without starting a model turn. A runner restart emits recovering states and lets each adapter establish what that session can safely do.
+4. The control plane asks about outstanding dispatches by ID. A runner can confirm delivery, report an outstanding operation, or say it never recorded that ID. Only then does normal dispatch resume. A recovering session can hold its queue while another session accepts input.
+
+Operator clients submit session actions with a caller-generated command ID. The control plane atomically saves the original response and an input fingerprint with the queue change. Repeating a successful request with the same ID returns that response, even after a restart. Reusing it for different input fails. This operator receipt confirms submission. The runner receipt supplies evidence of harness delivery.
+
+A queued prompt is durable in the control plane. A dispatched prompt may already have reached the runner. The runner records submission intent before invoking a harness and records delivery when it has evidence of acceptance. If the runner loses confirmation, it attempts to reconcile against native history. An unresolved delivery remains uncertain and holds subsequent prompts for that session. The CLI exposes the uncertainty in command status. The operator can still end the session.
+
+A ready session automatically receives the next queued prompt. Approval decisions address a specific native request and can pass waiting prompts. Cancellation before dispatch removes a command from consideration. After dispatch, cancellation asks the runner to confirm that submission was prevented. A stale stop command checks the target turn ID. End immediately closes the queue, cancels undispatched commands, and takes precedence on reconnect. The control plane displays ending while closure is in progress. If the interrupt fails or its outcome is uncertain, the command records that outcome, the session exposes the close error, and the operator can answer approvals or retry end. Previously canceled prompts stay canceled. History remains readable.
+
+A steer carries the session ID, exact target turn ID, user text, and its own command ID. It may pass queued follow-ups while the turn is working or awaiting approval. The runner checks the target again at delivery. A late steer fails. After a disconnect the existing command journal governs deduplication and uncertain delivery. A steer awaiting a Claude callback leaves approval and interruption commands actionable.
+
+## Harness behavior
+
+**Codex.** The runner starts a dedicated App Server listening on a private Unix socket in the runner directory. It can outlive the runner. Each session uses a persistent thread with paginated history, workspace-write sandboxing, and operator-reviewed on-request approvals. The adapter subscribes with `thread/resume`, buffers live notifications while fetching full turn items, then applies the buffered notifications. An active turn can reattach and an outstanding approval can be redelivered. The adapter supplies `expectedTurnId` on `turn/steer` and uses the steering command ID as the client message ID for recovery. It also uses explicit turn IDs for interrupts. Command execution, file-change, and permission approvals are supported. Other interactive request types receive an explicit unsupported-request error.
+
+**Claude Code.** The adapter drives the installed executable through headless streaming JSON with host permission handling. It assigns a native UUID before submitting the first prompt. Each new turn on an existing conversation uses that UUID after the previous worker exits. It records echoed input, assistant messages, tool activity, approval requests, and results. After runner death it reads the native local JSONL transcript and checks the prior worker's identity and liveness. While the worker survives the adapter can observe it. Input resumes when the worker exits. A pending approval on the old stdio connection can fail. The recovered transcript records that outcome. Ending an orphaned Claude session waits for the surviving worker to exit.
+
+Claude stop waits for the matching interrupt response. A refusal fails the command, and a lost response leaves delivery uncertain.
+
+During a controlled Claude turn, the adapter registers post-tool and stop hooks. A pending steer is returned as user-provided context in the main worker’s next matching callback. At the stop hook, Claude can continue the same turn with the updated instruction. The runner records delivery when Claude echoes the hook response. An orphaned worker is observable only. A steer already handed to a worker can remain uncertain if its acknowledgment is lost. [Claude Code hook reference](https://code.claude.com/docs/en/hooks)
+
+## First-version boundaries
+
+Recovery after runner death is best effort. The protocol does not promise replay of every native streaming fragment. Journals and history are local private files and currently grow with use. This version targets a single operator on a Unix host, with one active control-plane process per state directory. CLI launches and operating-system service installation are separate concerns. The runner and control plane run in the foreground. The Codex App Server is deliberately independent so restarting the runner can preserve active work.
