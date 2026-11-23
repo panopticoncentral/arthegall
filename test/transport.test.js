@@ -84,6 +84,9 @@ test("paired runner journals model activity across a control-plane outage and re
   const archives = new Map(await pack(checkout, "--workspaces"));
   // Supply the installed third-party dependency locally to keep this test offline.
   const [[, wsArchive]] = await pack(join(checkout, "node_modules", "ws"));
+  const [[, calendarArchive]] = await pack(
+    join(checkout, "node_modules", "luxon"),
+  );
   async function install(role, binName, otherRole, otherBin) {
     const prefix = join(root, role);
     await exec(
@@ -97,6 +100,7 @@ test("paired runner journals model activity across a control-plane outage and re
         "--no-audit",
         ...npmOptions,
         wsArchive,
+        ...(role === "control-plane" ? [calendarArchive] : []),
         archives.get("@arthegall/shared"),
         archives.get("@arthegall/" + role),
       ],
@@ -237,6 +241,63 @@ test("paired runner journals model activity across a control-plane outage and re
     connected.harnesses.find((h) => h.name === "claude").steering,
     "callback",
   );
+
+  const check = await command(
+    "schedule",
+    "create",
+    "send",
+    first.session,
+    "Check the previous result",
+    "--in",
+    "1s",
+    "--zone",
+    "UTC",
+  );
+  assert.equal(check.upcoming.length, 1);
+  const [occurrence] = await until(async () => {
+    const rows = await command("schedule", "history", check.id);
+    return rows[0]?.status === "finished" && rows;
+  });
+  assert.equal(occurrence.session, first.session);
+  const followup = (await command("commands", first.session)).find(
+    (c) => c.id === occurrence.command,
+  );
+  assert.equal(followup.status, "delivered");
+  assert.match(
+    followup.text,
+    /Scheduled for .*\[UTC\]\n\nCheck the previous result/,
+  );
+
+  // A scheduled launch becomes due while its paired runner is offline.
+  await stop(client);
+  await until(
+    async () => (await command("runners"))[0].connectionState === "offline",
+  );
+  const offline = await command(
+    "schedule",
+    "create",
+    "launch",
+    id,
+    "claude",
+    cwd,
+    "Write a fresh report",
+    "--in",
+    "1s",
+  );
+  const queued = await until(async () => {
+    const [row] = await command("schedule", "history", offline.id);
+    return row?.status === "queued" && row;
+  });
+  const reconnected = service(runnerCli, ["--dir", runner], runnerEnv);
+  const finished = await until(async () => {
+    const [row] = await command("schedule", "history", offline.id);
+    return row?.status === "finished" && row;
+  });
+  assert.equal(finished.command, queued.command);
+  assert.equal(finished.commandStatus, "delivered");
+  assert.notEqual(finished.session, first.session);
+  assert.equal((await command("commands", finished.session)).length, 1);
+  await stop(reconnected);
 
   // A peer using the original identify envelope has no version or features.
   const keys = generateKeyPairSync("ed25519");

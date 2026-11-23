@@ -83,6 +83,14 @@ export function serve(dir, opt) {
     for (const command of control.dispatch(peer.id, peer.sent))
       send(peer, { op: "command", command });
   }
+  function tick(peer) {
+    const runners = control.scheduler.advance(Date.now());
+    if (peer?.ready) runners.add(peer.id);
+    for (const id of runners) {
+      const connected = live.get(id);
+      if (connected) pump(connected);
+    }
+  }
   function admit(peer, r) {
     const prev = live.get(r.id);
     live.set(r.id, peer);
@@ -231,14 +239,16 @@ export function serve(dir, opt) {
           peer.inspect = null;
           peer.ready = true;
         } else throw Error("unknown runner message");
-        pump(peer);
+        tick(peer);
       } catch (e) {
         console.error("runner connection:", e.message);
         socket.close(1008, "protocol error");
       }
     });
   });
+  tick();
   const timer = setInterval(() => {
+    tick();
     for (const socket of ws.clients) {
       const peer = socket.arthegallPeer;
       if (!peer) continue;
@@ -311,6 +321,9 @@ export function serve(dir, opt) {
               ? { ...s, activity: s.state, state: "ending" }
               : s,
           );
+      else if (op === "schedule-list") result = control.scheduler.list();
+      else if (op === "schedule-history")
+        result = control.scheduler.history(a.id);
       else if (op === "commands")
         result = store.commands
           .list()
@@ -323,6 +336,7 @@ export function serve(dir, opt) {
         if (!args.commandId) throw Error("submit requires a command ID");
         result = control.action(action, args);
       } else result = control.action(op, a);
+      control.scheduler.advance(Date.now());
       res.end(JSON.stringify(result));
       for (const peer of live.values()) pump(peer);
     } catch (e) {

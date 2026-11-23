@@ -6,9 +6,31 @@ function initialize(db, legacy) {
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS operator_requests (id TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS uncertain_commands ON commands(id) WHERE json_extract(value,'$.status')='uncertain';
+    CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS schedules_due ON schedules(json_extract(value,'$.nextDue'));
+    CREATE TABLE IF NOT EXISTS occurrences (
+      schedule TEXT NOT NULL, due TEXT NOT NULL, zone TEXT NOT NULL, status TEXT NOT NULL,
+      command TEXT UNIQUE, session TEXT, turn TEXT, detail TEXT, missed TEXT,
+      PRIMARY KEY(schedule,due)
+    );
+    CREATE INDEX IF NOT EXISTS occurrence_status ON occurrences(status,schedule,due);
+    CREATE INDEX IF NOT EXISTS occurrence_session ON occurrences(session,turn);
     CREATE TABLE IF NOT EXISTS events (runner TEXT, seq INTEGER, session TEXT, body TEXT NOT NULL, PRIMARY KEY(runner,seq));
     CREATE INDEX IF NOT EXISTS session_events ON events(session,seq);
   `);
+  // Early scheduler checkouts stored the missed-work policy only on the schedule.
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('occurrences') WHERE name='missed'",
+      )
+      .get()
+  ) {
+    db.exec(`ALTER TABLE occurrences ADD COLUMN missed TEXT;
+      UPDATE occurrences SET missed=(SELECT json_extract(value,'$.rule.missed')
+        FROM schedules WHERE id=occurrences.schedule)`);
+  }
   if (legacy)
     db.exec(`
     INSERT INTO runners SELECT id,value FROM records WHERE kind='runner' ORDER BY rowid;
@@ -21,6 +43,7 @@ function initialize(db, legacy) {
 export class ControlStore extends SQLiteState {
   constructor(dir) {
     super(dir, "control plane", initialize);
+    this.schedules = new JsonTable(this.db, "schedules");
     this.requests = new JsonTable(this.db, "operator_requests");
     this.runners = new JsonTable(this.db, "runners");
     this.sessions = new JsonTable(this.db, "sessions");

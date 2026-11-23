@@ -1,15 +1,17 @@
 import { randomUUID, createHash } from "node:crypto";
+import { Scheduler } from "./scheduler.js";
 import { isPromptCommand } from "@arthegall/shared/protocol";
 
 const open = new Set(["queued", "dispatching", "uncertain"]);
 const requireValue = (value, message) => {
-  if (!value) throw Error(message);
+  if (!value) throw Object.assign(Error(message), { code: "INVALID_ACTION" });
   return value;
 };
 
 export class Control {
   constructor(store) {
     this.store = store;
+    this.scheduler = new Scheduler(this);
   }
   session(id) {
     return requireValue(this.store.sessions.get(id), "unknown session");
@@ -60,20 +62,34 @@ export class Control {
       return result;
     });
   }
+  openSession(id) {
+    const s = this.session(id);
+    requireValue(
+      !s.closing && !["ended", "failed"].includes(s.state),
+      "session is closed",
+    );
+    return s;
+  }
+  validateLaunch(a) {
+    const runner = requireValue(
+      this.store.runners.get(a.runner),
+      "unknown runner",
+    );
+    requireValue(
+      runner.harnesses?.some((h) => h.name === a.harness),
+      "runner has not advertised this harness",
+    );
+    requireValue(
+      typeof a.cwd === "string" && a.cwd.startsWith("/") && a.text?.trim(),
+      "expected harness, absolute working directory and prompt",
+    );
+  }
   apply(op, a, commandId) {
+    if (op === "schedule-create") return this.scheduler.create(a);
+    if (op === "schedule-edit") return this.scheduler.edit(a);
+    if (op === "schedule-cancel") return this.scheduler.cancel(a.id);
     if (op === "launch") {
-      const runner = requireValue(
-        this.store.runners.get(a.runner),
-        "unknown runner",
-      );
-      requireValue(
-        runner.harnesses?.some((h) => h.name === a.harness),
-        "runner has not advertised this harness",
-      );
-      requireValue(
-        typeof a.cwd === "string" && a.cwd.startsWith("/") && a.text?.trim(),
-        "expected harness, absolute working directory and prompt",
-      );
+      this.validateLaunch(a);
       const s = {
         id: randomUUID(),
         runner: a.runner,
@@ -117,8 +133,10 @@ export class Control {
         commandId,
       );
     }
-    const s = this.session(a.session);
+    const s =
+      op === "end" ? this.session(a.session) : this.openSession(a.session);
     if (op === "end") {
+      this.scheduler.closeSession(s.id);
       if (s.state === "ended") return s;
       if (s.closing) {
         // Earlier databases stored a boolean without the end command ID.
@@ -139,10 +157,6 @@ export class Control {
       this.store.sessions.put(s.id, s);
       return end;
     }
-    requireValue(
-      !s.closing && !["ended", "failed"].includes(s.state),
-      "session is closed",
-    );
     if (op === "send") {
       requireValue(a.text?.trim(), "empty prompt");
       return this.add(s, "prompt", { text: a.text }, commandId);
@@ -189,10 +203,12 @@ export class Control {
   }
   cancelLocal(c, close = true) {
     c.status = "canceled";
+    this.scheduler.receipt(c, "canceled");
     this.store.commands.put(c.id, c);
     if (close && c.type === "launch") {
       const s = this.session(c.session);
       s.state = "ended";
+      this.scheduler.closeSession(s.id);
       this.store.sessions.put(s.id, s);
       for (const next of this.store.commands
         .list()
@@ -201,11 +217,13 @@ export class Control {
     }
   }
   ingest(runner, { seq, event: e }) {
-    if (e.session && this.session(e.session).runner !== runner)
-      throw Error("foreign session");
+    const session = e.session && this.session(e.session);
+    if (session && session.runner !== runner) throw Error("foreign session");
     this.store.append(runner, seq, e);
+    if (e.type === "session" || e.type === "item")
+      this.scheduler.observe(session, e);
     if (e.type === "session") {
-      const s = this.session(e.session);
+      const s = session;
       Object.assign(s, {
         state: e.state,
         steering: e.steering,
@@ -215,6 +233,7 @@ export class Control {
       });
       this.store.sessions.put(s.id, s);
       if (["failed", "ended"].includes(s.state)) {
+        this.scheduler.closeSession(s.id);
         for (const c of this.store.commands
           .list()
           .filter(
@@ -237,7 +256,9 @@ export class Control {
     }
   }
   outcome(c, status, detail) {
-    this.store.commands.put(c.id, { ...c, status, detail });
+    this.scheduler.receipt(c, status, detail);
+    const updated = this.store.commands.put(c.id, { ...c, status, detail });
+    if (status === "queued") this.scheduler.requeued(updated);
     if (c.type === "end" && ["failed", "uncertain"].includes(status)) {
       const s = this.session(c.session);
       if (s.closing && (!s.endCommand || s.endCommand === c.id)) {
@@ -275,8 +296,7 @@ export class Control {
           )
             this.cancelLocal(c, false);
           else {
-            c.status = "queued";
-            this.store.commands.put(c.id, c);
+            this.outcome(c, "queued");
           }
         } else if (
           ["delivered", "failed", "canceled", "uncertain"].includes(
@@ -322,8 +342,17 @@ export class Control {
           continue;
       }
       if (c.status === "queued") {
-        c.status = "dispatching";
-        this.store.commands.put(c.id, c);
+        this.store.transaction(() => {
+          c.status = "dispatching";
+          this.store.commands.put(c.id, c);
+          if (isPromptCommand(c.type)) {
+            const scheduled = this.scheduler.setStatus(c.id, "dispatching");
+            if (scheduled || s.scheduleCommand) {
+              s.scheduleCommand = scheduled ? c.id : null;
+              this.store.sessions.put(s.id, s);
+            }
+          }
+        });
       }
       sent.add(c.id);
       result.push(c);

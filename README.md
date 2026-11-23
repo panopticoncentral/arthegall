@@ -19,7 +19,7 @@ mkdir -p dist
 npm pack --workspaces --pack-destination dist
 ```
 
-Copy the shared archive and the appropriate program archive to each host. From the directory holding those files, run the command for that host. These examples use a user-owned npm prefix. npm resolves the pinned WebSocket dependency during installation.
+Copy the shared archive and the appropriate program archive to each host. From the directory holding those files, run the command for that host. These examples use a user-owned npm prefix. npm resolves the pinned package dependencies during installation.
 
 **Control-plane host**
 
@@ -89,6 +89,28 @@ Use `claude` as the harness name to start a Claude Code session. The history com
 The `steering` field shows `native` for a live Codex turn, `callback` for a controlled Claude turn, and `unavailable` when steering cannot currently be delivered. Older runners may omit this field. Use the `turn` from `sessions` when issuing a steer. Codex accepts it through its App Server. Claude picks it up after a tool returns or when it is about to finish the turn. If the target ends before delivery, the command reports failure. Use `send` when you want a new turn.
 
 Session actions accept an optional `--command-id` (UUID v4). Generate it before submission if a script must survive a lost reply. Retry the same action and arguments with the same ID to recover the original response, including the original session ID for a launch. Use a fresh ID for a second intentional submission. The CLI generates an ID by default and prints it on request failure. Read current delivery status with `arthegall commands SESSION_ID`.
+
+## Schedule sessions and follow-ups
+
+The control plane keeps schedules in its SQLite database. Use a scheduled `send` for a follow-up that needs an existing conversation. Use a scheduled `launch` for work that should start with a fresh conversation each time.
+
+```sh
+arthegall schedule create send SESSION_ID "Check whether the build finished" --in 5m
+arthegall schedule create launch RUNNER_ID codex /work/project "Review yesterday's activity" \
+  --time 08:00 --days weekdays --zone America/Los_Angeles --missed backfill
+arthegall schedule list
+arthegall schedule history SCHEDULE_ID
+arthegall schedule edit SCHEDULE_ID --time 09:30 --days mon,wed,fri
+arthegall schedule cancel SCHEDULE_ID
+```
+
+Use `--at 2027-01-15T08:00:00-08:00` for an exact future time. Delays accept positive whole seconds, minutes, hours, or days (`s`, `m`, `h`, `d`). Recurring schedules use 24-hour local time. Omitting `--days` selects every day. The CLI saves its local time zone unless you supply `--zone`. Create and edit show the next three occurrences with their offsets. A repeated local time runs once at the earlier instant. A time in a spring-forward gap moves forward by the size of the gap for that occurrence.
+
+For recurring schedules, `--missed latest` is the default. If several checks become due before the runner can take them, the latest one waits and older unstarted checks appear as skipped. With `--missed backfill`, each due time is retained and released oldest first. Each prompt includes its scheduled date, time, and zone. A delayed one-off remains pending. The control plane checks due times on startup, on reconnect, and on a one-second timer while serving.
+
+Schedule history links each occurrence to its command and session as soon as it enters the queue. The `commandStatus` field shows delivery status, and `status` tracks the occurrence through the harness turn. An uncertain delivery waits for reconciliation. If a delivered turn ends without a verifiable result, history shows `unconfirmed`. Use `arthegall history SESSION_ID` to inspect the activity and output.
+
+Editing replaces the future timing rule and retains the zone and recurring missed-work policy unless overridden. Each occurrence already due keeps its original policy, including reports waiting for backfill. Canceling a schedule withdraws locally queued occurrences and preserves history. Work already dispatched follows normal runner recovery. Ending a session also cancels schedules that send follow-ups to it. A recurring launch schedule survives the end of an individual session it created.
 
 ## Run on separate machines
 

@@ -18,7 +18,14 @@ arthegall commands [SESSION] | history SESSION [--after SEQUENCE] [--follow]
 arthegall approve SESSION REQUEST | deny SESSION REQUEST
 arthegall cancel COMMAND | stop SESSION TURN | end SESSION
 
-Session actions accept --command-id UUID for retrying the same request.
+arthegall schedule create launch RUNNER HARNESS ABSOLUTE_DIRECTORY "PROMPT" TIMING
+arthegall schedule create send SESSION "FOLLOW-UP" TIMING
+arthegall schedule edit SCHEDULE TIMING | schedule cancel SCHEDULE
+arthegall schedule list | schedule history SCHEDULE
+TIMING: --in 5m | --at ISO_TIMESTAMP_WITH_OFFSET | --time HH:MM [--days weekdays|daily|mon,wed,...]
+        [--zone America/Los_Angeles] [--missed latest|backfill (recurring only)]
+
+Session and schedule actions accept --command-id UUID for retrying the same request.
 Operator commands use --dir DIR or ARTHEGALL_CONTROL_DIR to locate the local control plane.`;
 function request(dir, data) {
   return new Promise((resolve, reject) => {
@@ -45,13 +52,25 @@ function request(dir, data) {
   });
 }
 try {
-  const {
-    values: o,
-    positionals: [op, ...p],
-  } = parseArgs({
+  const { values: o, positionals } = parseArgs({
     allowPositionals: true,
     options: Object.fromEntries(
-      ["dir", "listen", "port", "name", "cert", "key", "after", "command-id"]
+      [
+        "dir",
+        "listen",
+        "port",
+        "name",
+        "cert",
+        "key",
+        "after",
+        "command-id",
+        "in",
+        "at",
+        "time",
+        "days",
+        "zone",
+        "missed",
+      ]
         .map((k) => [k, { type: "string" }])
         .concat([
           ["help", { type: "boolean" }],
@@ -59,6 +78,23 @@ try {
         ]),
     ),
   });
+  let [op, ...p] = positionals;
+  const calendar = {};
+  for (const key of ["in", "at", "time", "days", "zone", "missed"]) {
+    if (o[key] === undefined) continue;
+    if (op !== "schedule" || !["create", "edit"].includes(p[0]))
+      throw Error("timing options require schedule create or edit");
+    calendar[key] = o[key];
+  }
+  let target;
+  if (op === "schedule") {
+    op = "schedule-" + p.shift();
+    if (op === "schedule-create") {
+      target = p.shift();
+      if (!["launch", "send"].includes(target)) throw Error(help);
+      calendar.zone ??= Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+  }
   const dir = resolve(
     o.dir ??
       process.env.ARTHEGALL_CONTROL_DIR ??
@@ -67,10 +103,19 @@ try {
   if (!op || o.help || op === "help") console.log(help);
   else if (op === "serve") {
     if (!!o.cert !== !!o.key) throw Error("supply --cert and --key together");
-    if (o["command-id"]) throw Error("--command-id requires a session action");
+    if (o["command-id"])
+      throw Error("--command-id requires a session or schedule action");
     serve(dir, o);
   } else {
     const forms = {
+      "schedule-create":
+        target === "send"
+          ? ["session", "text"]
+          : ["runner", "harness", "cwd", "text"],
+      "schedule-edit": ["id"],
+      "schedule-list": [],
+      "schedule-history": ["id"],
+      "schedule-cancel": ["id"],
       pair: ["code"],
       runners: [],
       sessions: [],
@@ -88,7 +133,11 @@ try {
     const keys = forms[op];
     if (!Array.isArray(keys) || keys.length !== p.length) throw Error(help);
     const args = Object.fromEntries(keys.map((k, i) => [k, p[i]]));
+    if (target) args.target = target;
+    Object.assign(args, calendar);
     const action = ![
+      "schedule-list",
+      "schedule-history",
       "pair",
       "runners",
       "sessions",
@@ -96,7 +145,7 @@ try {
       "history",
     ].includes(op);
     if (!action && o["command-id"] !== undefined)
-      throw Error("--command-id requires a session action");
+      throw Error("--command-id requires a session or schedule action");
     if (action) args.commandId = o["command-id"] ?? randomUUID();
     if (o.after) args.after = Number(o.after);
     if (o.after && (!Number.isSafeInteger(args.after) || args.after < 0))
