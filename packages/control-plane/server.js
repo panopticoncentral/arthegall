@@ -18,6 +18,7 @@ import { IncomingEvent } from "./replay.js";
 import {
   protocolOffer,
   projectPathsFeature,
+  sessionSettingsFeature,
   replayFeature,
   versionIssue,
   decodeRunnerMessage,
@@ -85,6 +86,7 @@ export function serve(dir, opt) {
       peer.id,
       peer.sent,
       peer.projectPaths,
+      peer.sessionSettings,
     ))
       send(peer, { op: "command", command });
   }
@@ -112,6 +114,7 @@ export function serve(dir, opt) {
       features: [
         ...(peer.parts ? [replayFeature] : []),
         ...(peer.projectPaths ? [projectPathsFeature] : []),
+        ...(peer.sessionSettings ? [sessionSettingsFeature] : []),
       ],
       ...(peer.parts ? { replayPartBytes } : {}),
     });
@@ -190,6 +193,8 @@ export function serve(dir, opt) {
           }
           peer.projectPaths =
             m.features?.includes(projectPathsFeature) === true;
+          peer.sessionSettings =
+            m.features?.includes(sessionSettingsFeature) === true;
           peer.parts =
             m.protocolVersion === undefined ||
             m.features?.includes(replayFeature);
@@ -343,7 +348,7 @@ export function serve(dir, opt) {
       else if (op === "history") {
         control.session(a.session);
         result = store.history(a.session, a.after ?? 0);
-      } else if (op === "submit") {
+      } else if (op === "submit" || op === "submit-configured-launch") {
         const { action, ...args } = a;
         if (!args.commandId) throw Error("submit requires a command ID");
         result = control.action(action, args);

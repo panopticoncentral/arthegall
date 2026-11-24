@@ -508,3 +508,27 @@ test("follow-ups on a multi-directory session wait through a runner downgrade", 
   assert.equal(f.control.command(next.id).status, "queued");
   assert.equal(f.dispatch()[0].id, next.id);
 });
+
+test("configured launches and follow-ups wait for a runner that supports session settings", (t) => {
+  const f = fixture(t);
+  const settings = { approvalPolicy: "never" };
+  const first = f.control.action("launch", { ...launch, settings });
+  f.restart();
+  const legacy = () => f.control.dispatch("r", new Set(), true, false);
+  assert.deepEqual(legacy(), []);
+  assert.match(f.control.command(first.id).detail, /Update the runner/);
+  assert.deepEqual(f.dispatch()[0].settings, settings);
+  f.event(first.session, {
+    type: "receipt",
+    command: first.id,
+    status: "delivered",
+  });
+  f.event(first.session, { type: "session", state: "ready" });
+  const next = f.control.action("send", {
+    session: first.session,
+    text: "continue",
+  });
+  assert.deepEqual(legacy(), []);
+  assert.deepEqual(f.control.session(first.session).settings, settings);
+  assert.equal(f.dispatch()[0].id, next.id);
+});

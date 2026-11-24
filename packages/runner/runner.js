@@ -201,6 +201,7 @@ export class Runner {
         harness: c.harness,
         cwd: c.cwd,
         additionalDirs: c.additionalDirs ?? [],
+        settings: c.settings,
         state: "new",
         approvals: [],
         turn: null,

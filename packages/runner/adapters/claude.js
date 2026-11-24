@@ -132,6 +132,8 @@ export class ClaudeAdapter {
   async input(c) {
     const { ctx } = this,
       s = ctx.s;
+    const { model, effort, permissionMode, permissionPrompts } =
+      s.settings ?? {};
     const args = [
       "-p",
       "--verbose",
@@ -141,12 +143,15 @@ export class ClaudeAdapter {
       "stream-json",
       "--replay-user-messages",
       "--permission-prompts",
-      "host",
-      "--permission-prompt-tool",
-      "stdio",
+      permissionPrompts ?? "host",
       s.hasHistory ? "--resume" : "--session-id",
       s.native,
     ];
+    if (permissionPrompts !== "none")
+      args.push("--permission-prompt-tool", "stdio");
+    if (model) args.push("--model", model);
+    if (effort) args.push("--effort", effort);
+    if (permissionMode) args.push("--permission-mode", permissionMode);
     if (s.additionalDirs?.length) args.push("--add-dir", ...s.additionalDirs);
     const child = spawn("claude", args, {
       cwd: s.cwd,

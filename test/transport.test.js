@@ -186,6 +186,14 @@ test("paired runner journals model activity across a control-plane outage and re
     project.id,
     "claude",
     "Synthetic prompt",
+    "--model",
+    "sonnet",
+    "--effort",
+    "high",
+    "--permission-mode",
+    "manual",
+    "--permission-prompts",
+    "host",
     "--command-id",
     launchId,
   ];
@@ -195,6 +203,31 @@ test("paired runner journals model activity across a control-plane outage and re
   ]);
   assert.deepEqual(duplicate, first);
   assert.equal(first.id, launchId);
+  assert.deepEqual(first.settings, {
+    model: "sonnet",
+    effort: "high",
+    permissionMode: "manual",
+    permissionPrompts: "host",
+  });
+  await assert.rejects(
+    command(...launchArgs.map((arg) => (arg === "high" ? "low" : arg))),
+    /different input/,
+  );
+  await assert.rejects(
+    command(
+      "launch",
+      project.id,
+      "claude",
+      "Bad settings",
+      "--approval-policy",
+      "never",
+    ),
+    /not a claude session setting/,
+  );
+  await assert.rejects(
+    command("send", first.session, "Follow-up", "--model", "opus"),
+    /require launch/,
+  );
   await assert.rejects(
     command(
       "launch",
@@ -212,6 +245,25 @@ test("paired runner journals model activity across a control-plane outage and re
   );
   assert.equal((await command("project", "list"))[0].id, project.id);
   await until(() => existsSync(join(cwd, "started")));
+  function workerArgs() {
+    return JSON.parse(readFileSync(join(cwd, "worker-args")));
+  }
+  function checkSettings(expected) {
+    const args = workerArgs();
+    for (const [flag, value] of Object.entries(expected)) {
+      const index = args.indexOf(flag);
+      assert.notEqual(index, -1, flag);
+      assert.equal(args[index + 1], value, flag);
+    }
+  }
+  const firstFlags = {
+    "--model": "sonnet",
+    "--effort": "high",
+    "--permission-mode": "manual",
+    "--permission-prompts": "host",
+  };
+  checkSettings(firstFlags);
+  assert.ok(workerArgs().includes("--session-id"));
   assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), extra);
   await command("project", "edit", project.id, "Renamed", cwd, extra[1]);
   await until(
@@ -278,6 +330,8 @@ test("paired runner journals model activity across a control-plane outage and re
     return rows[0]?.status === "finished" && rows;
   });
   assert.equal(occurrence.session, first.session);
+  checkSettings(firstFlags);
+  assert.ok(workerArgs().includes("--resume"));
   assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), extra);
   const followup = (await command("commands", first.session)).find(
     (c) => c.id === occurrence.command,
@@ -300,6 +354,14 @@ test("paired runner journals model activity across a control-plane outage and re
     project.id,
     "claude",
     "Write a fresh report",
+    "--model",
+    "opus",
+    "--effort",
+    "low",
+    "--permission-mode",
+    "plan",
+    "--permission-prompts",
+    "none",
     "--in",
     "1s",
   );
@@ -313,6 +375,13 @@ test("paired runner journals model activity across a control-plane outage and re
     return row?.status === "finished" && row;
   });
   assert.equal(finished.command, queued.command);
+  checkSettings({
+    "--model": "opus",
+    "--effort": "low",
+    "--permission-mode": "plan",
+    "--permission-prompts": "none",
+  });
+  assert.equal(workerArgs().includes("--permission-prompt-tool"), false);
   assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), [extra[1]]);
   assert.equal(finished.commandStatus, "delivered");
   assert.notEqual(finished.session, first.session);

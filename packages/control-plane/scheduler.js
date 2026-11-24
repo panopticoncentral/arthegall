@@ -30,6 +30,7 @@ export class Scheduler {
         op: "launch",
         project: project.id,
         harness: a.harness,
+        ...(a.settings && { settings: a.settings }),
       };
     } else if (a.target === "send") {
       this.control.openSession(a.session);

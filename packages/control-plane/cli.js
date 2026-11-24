@@ -7,6 +7,14 @@ import http from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { serve } from "./server.js";
 process.umask(0o077);
+const sessionFlags = {
+  model: "model",
+  effort: "effort",
+  "approval-policy": "approvalPolicy",
+  "approval-reviewer": "approvalsReviewer",
+  "permission-mode": "permissionMode",
+  "permission-prompts": "permissionPrompts",
+};
 const help = `arthegall serve [--dir DIR] [--listen ADDRESS] [--port PORT] [--name TLS_HOSTNAME]
                [--cert CERT --key PRIVATE_KEY]
 arthegall pair CODE
@@ -14,19 +22,24 @@ arthegall runners | sessions [PROJECT]
 arthegall project add RUNNER NAME PRIMARY_PATH [ADDITIONAL_PATH ...]
 arthegall project edit PROJECT NAME PRIMARY_PATH [ADDITIONAL_PATH ...]
 arthegall project list | project archive PROJECT
-arthegall launch PROJECT HARNESS "FIRST PROMPT"
+arthegall launch PROJECT HARNESS "FIRST PROMPT" [SESSION OPTIONS]
 arthegall send SESSION "FOLLOW-UP"
 arthegall steer SESSION TURN "UPDATED INSTRUCTION"
 arthegall commands [SESSION] | history SESSION [--after SEQUENCE] [--follow]
 arthegall approve SESSION REQUEST | deny SESSION REQUEST
 arthegall cancel COMMAND | stop SESSION TURN | end SESSION
 
-arthegall schedule create launch PROJECT HARNESS "PROMPT" TIMING
+arthegall schedule create launch PROJECT HARNESS "PROMPT" TIMING [SESSION OPTIONS]
 arthegall schedule create send SESSION "FOLLOW-UP" TIMING
 arthegall schedule edit SCHEDULE TIMING | schedule cancel SCHEDULE
 arthegall schedule list | schedule history SCHEDULE
 TIMING: --in 5m | --at ISO_TIMESTAMP_WITH_OFFSET | --time HH:MM [--days weekdays|daily|mon,wed,...]
         [--zone America/Los_Angeles] [--missed latest|backfill (recurring only)]
+
+Session options for both harnesses: --model MODEL --effort LEVEL
+Codex: --approval-policy untrusted|on-request|never --approval-reviewer user|auto_review
+Claude: --permission-mode manual|acceptEdits|plan|auto|dontAsk|bypassPermissions
+        --permission-prompts host|none
 
 Project, session and schedule actions accept --command-id UUID for retrying the same request.
 Operator commands use --dir DIR or ARTHEGALL_CONTROL_DIR to locate the local control plane.`;
@@ -73,6 +86,7 @@ try {
         "days",
         "zone",
         "missed",
+        ...Object.keys(sessionFlags),
       ]
         .map((k) => [k, { type: "string" }])
         .concat([
@@ -104,6 +118,18 @@ try {
       process.env.ARTHEGALL_CONTROL_DIR ??
       join(homedir(), ".arthegall", "control"),
   );
+  const settings = Object.fromEntries(
+    Object.entries(sessionFlags)
+      .filter(([flag]) => o[flag] !== undefined)
+      .map(([flag, key]) => [key, o[flag]]),
+  );
+  const configured = Object.keys(settings).length > 0;
+  if (
+    configured &&
+    op !== "launch" &&
+    !(op === "schedule-create" && target === "launch")
+  )
+    throw Error("session options require launch or schedule create launch");
   if (!op || o.help || op === "help") console.log(help);
   else if (op === "serve") {
     if (!!o.cert !== !!o.key) throw Error("supply --cert and --key together");
@@ -149,6 +175,7 @@ try {
     if (!Array.isArray(keys) || keys.length !== p.length) throw Error(help);
     const args = Object.fromEntries(keys.map((k, i) => [k, p[i]]));
     if (paths) args.additionalDirs = paths;
+    if (configured) args.settings = settings;
     if (target) args.target = target;
     Object.assign(args, calendar);
     const action = ![
@@ -184,7 +211,15 @@ try {
           JSON.stringify(
             await request(
               dir,
-              action ? { op: "submit", action: op, ...args } : { op, ...args },
+              // Older servers must reject a configured launch instead of silently
+              // starting it with default permissions.
+              action
+                ? {
+                    op: configured ? "submit-configured-launch" : "submit",
+                    action: op,
+                    ...args,
+                  }
+                : { op, ...args },
             ),
             null,
             2,

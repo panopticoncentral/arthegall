@@ -210,3 +210,52 @@ test("Codex receives the session workspace on start and resume", async () => {
   adapter.call = async () => ({ thread: { id: "unsupported" } });
   await assert.rejects(adapter.create(), /did not accept/);
 });
+
+test("Codex reapplies saved session choices on resume and effort on each turn", async () => {
+  const settings = {
+    model: "example",
+    effort: "high",
+    approvalPolicy: "untrusted",
+    approvalsReviewer: "auto_review",
+  };
+  const s = { cwd: "/work", settings };
+  const adapter = new CodexAdapter({
+    s,
+    update: (patch) => Object.assign(s, patch),
+    confirm() {},
+  });
+  adapter.connect = async () => {};
+  const methods = [];
+  adapter.call = async (method, params) => {
+    methods.push(method);
+    if (method === "thread/turns/list") return { data: [], nextCursor: null };
+    if (method === "turn/start") {
+      assert.equal(params.effort, settings.effort);
+      return { turn: { status: "completed" } };
+    }
+    for (const key of ["model", "approvalPolicy", "approvalsReviewer"])
+      assert.equal(params[key], settings[key]);
+    if (method === "thread/start")
+      assert.equal(params.sandbox, "workspace-write");
+    return { ...params, thread: { id: "native", status: { type: "idle" } } };
+  };
+  await adapter.create();
+  await adapter.input({ id: "first", text: "Start" });
+  await adapter.recover();
+  await adapter.input({ id: "next", text: "Continue" });
+  assert.deepEqual(methods, [
+    "thread/start",
+    "turn/start",
+    "thread/resume",
+    "thread/turns/list",
+    "turn/start",
+  ]);
+  adapter.call = async () => ({
+    thread: { id: "native" },
+    approvalPolicy: "never",
+  });
+  await assert.rejects(
+    adapter.create(),
+    /did not accept the requested approval/,
+  );
+});

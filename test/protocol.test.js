@@ -44,6 +44,29 @@ test("wire contracts reject malformed receipts, commands and acknowledgments", (
     }),
   );
   assert.throws(() => decode(decodeControlMessage, { op: "ack", seq: -1 }));
+  const launch = {
+    id: "c",
+    session: "s",
+    runner: "r",
+    type: "launch",
+    harness: "claude",
+    cwd: "/work",
+    text: "work",
+  };
+  for (const settings of [
+    null,
+    {},
+    { effort: "invalid" },
+    { permissionMode: "on-request" },
+    { model: "--flag" },
+  ]) {
+    assert.throws(() =>
+      decode(decodeControlMessage, {
+        op: "command",
+        command: { ...launch, settings },
+      }),
+    );
+  }
   assert.throws(() => decode(decodeRunnerMessage, { op: "ack", seq: 1 }));
   assert.equal(supportsEventParts({ replayPartBytes: 256 }), true);
   assert.equal(

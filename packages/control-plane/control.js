@@ -1,6 +1,9 @@
 import { randomUUID, createHash } from "node:crypto";
 import { Scheduler } from "./scheduler.js";
-import { isPromptCommand } from "@arthegall/shared/protocol";
+import {
+  isPromptCommand,
+  sessionSettingsIssue,
+} from "@arthegall/shared/protocol";
 
 const open = new Set(["queued", "dispatching", "uncertain"]);
 const requireValue = (value, message) => {
@@ -32,6 +35,19 @@ export class Control {
   }
   action(op, { commandId, ...args }) {
     return this.store.transaction(() => {
+      if (args.settings !== undefined) {
+        requireValue(
+          op === "launch" ||
+            (op === "schedule-create" && args.target === "launch"),
+          "session settings require a launch",
+        );
+        const issue = sessionSettingsIssue(args.harness, args.settings);
+        requireValue(!issue, issue);
+        // Equivalent settings in different key orders have the same retry fingerprint.
+        args.settings = Object.fromEntries(
+          Object.entries(args.settings).sort(([a], [b]) => a.localeCompare(b)),
+        );
+      }
       if (commandId === undefined) return this.apply(op, args);
       if (
         typeof commandId !== "string" ||
@@ -129,6 +145,7 @@ export class Control {
         harness: a.harness,
         cwd: project.cwd,
         additionalDirs: project.additionalDirs,
+        ...(a.settings && { settings: a.settings }),
         state: "new",
         closing: false,
       };
@@ -142,6 +159,7 @@ export class Control {
           cwd: s.cwd,
           additionalDirs: s.additionalDirs,
           harness: a.harness,
+          ...(s.settings && { settings: s.settings }),
         },
         commandId,
       );
@@ -344,7 +362,12 @@ export class Control {
       }
     });
   }
-  dispatch(runner, sent, supportsProjectPaths = true) {
+  dispatch(
+    runner,
+    sent,
+    supportsProjectPaths = true,
+    supportsSessionSettings = true,
+  ) {
     const cmds = this.store.commands
       .list()
       .filter((c) => c.runner === runner && open.has(c.status));
@@ -377,16 +400,19 @@ export class Control {
         )
           continue;
       }
-      if (
-        !supportsProjectPaths &&
-        s.additionalDirs?.length &&
-        (isPromptCommand(c.type) || c.type === "steer")
-      ) {
-        const detail =
-          "Update the runner to send input to sessions with additional project paths";
-        if (c.detail !== detail)
-          this.store.commands.put(c.id, { ...c, detail });
-        continue;
+      if (isPromptCommand(c.type) || c.type === "steer") {
+        let detail;
+        if (s.settings && !supportsSessionSettings)
+          detail =
+            "Update the runner to send input to sessions with explicit harness settings";
+        else if (s.additionalDirs?.length && !supportsProjectPaths)
+          detail =
+            "Update the runner to send input to sessions with additional project paths";
+        if (detail) {
+          if (c.detail !== detail)
+            this.store.commands.put(c.id, { ...c, detail });
+          continue;
+        }
       }
       if (c.status === "queued") {
         this.store.transaction(() => {

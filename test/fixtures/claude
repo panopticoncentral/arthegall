@@ -33,6 +33,7 @@ else {
       return;
     }
     const dirs = process.argv.indexOf("--add-dir");
+    writeFileSync("worker-args", JSON.stringify(process.argv.slice(2)));
     writeFileSync("started", JSON.stringify(dirs < 0 ? [] : process.argv.slice(dirs + 1)));
     for (let i = 0; i < 200 && !existsSync("release"); i++) await delay(50);
     print({

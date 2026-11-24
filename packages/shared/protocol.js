@@ -12,15 +12,68 @@ export const replayPartBytes = 256 * 1024;
 export const protocolVersion = 1;
 export const replayFeature = "event-parts";
 export const projectPathsFeature = "project-paths";
+export const sessionSettingsFeature = "session-settings";
 export const protocolOffer = {
   protocolVersion,
-  features: [replayFeature, projectPathsFeature],
+  features: [replayFeature, projectPathsFeature, sessionSettingsFeature],
 };
 
 const text = (value) => typeof value === "string";
 const id = (value) => text(value) && value.length > 0;
 const seq = (value) => Number.isSafeInteger(value) && value >= 0;
 const positive = (value) => seq(value) && value > 0;
+
+// Codex advertises effort levels per model. Leave model identifiers and
+// Codex effort names open so runners can use their own model catalogs.
+const sessionSettings = {
+  codex: {
+    model: null,
+    effort: null,
+    approvalPolicy: ["untrusted", "on-request", "never"],
+    approvalsReviewer: ["user", "auto_review"],
+  },
+  claude: {
+    model: null,
+    effort: ["low", "medium", "high", "xhigh", "max"],
+    permissionMode: [
+      "manual",
+      "acceptEdits",
+      "plan",
+      "auto",
+      "dontAsk",
+      "bypassPermissions",
+    ],
+    permissionPrompts: ["host", "none"],
+  },
+};
+export function sessionSettingsIssue(harness, settings) {
+  if (settings === undefined) return null;
+  if (
+    !settings ||
+    typeof settings !== "object" ||
+    Array.isArray(settings) ||
+    !Object.keys(settings).length
+  )
+    return "expected one or more session settings";
+  if (!Object.hasOwn(sessionSettings, harness))
+    return "unsupported harness for session settings";
+  const supported = sessionSettings[harness];
+  for (const [key, value] of Object.entries(settings)) {
+    if (!Object.hasOwn(supported, key))
+      return `${key} is not a ${harness} session setting`;
+    if (supported[key]) {
+      if (!supported[key].includes(value))
+        return `${key} must be one of ${supported[key].join(", ")}`;
+    } else if (
+      typeof value !== "string" ||
+      !value ||
+      /^-|[\s\x00]/u.test(value)
+    ) {
+      return `invalid ${key} for ${harness}`;
+    }
+  }
+  return null;
+}
 const list = (value, check) => Array.isArray(value) && value.every(check);
 const handshake = (m) =>
   (m.protocolVersion === undefined || positive(m.protocolVersion)) &&
@@ -46,6 +99,7 @@ const commandFields = {
     id(c.harness) &&
     id(c.cwd) &&
     text(c.text) &&
+    !sessionSettingsIssue(c.harness, c.settings) &&
     (c.additionalDirs === undefined ||
       list(c.additionalDirs, (p) => id(p) && p.startsWith("/"))),
   prompt: (c) => text(c.text),

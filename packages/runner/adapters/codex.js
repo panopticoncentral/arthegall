@@ -135,7 +135,7 @@ export class CodexAdapter {
       ? { cwd, runtimeWorkspaceRoots: [cwd, ...additionalDirs] }
       : {};
   }
-  verifyWorkspace(response) {
+  verifyThread(response) {
     if (
       this.ctx.s.additionalDirs?.some(
         (path) => !response.runtimeWorkspaceRoots?.includes(path),
@@ -145,6 +145,14 @@ export class CodexAdapter {
       throw Error(
         "Codex did not accept the additional workspace roots. Check the installed Codex version.",
       );
+    }
+    const { approvalPolicy, approvalsReviewer } = this.ctx.s.settings ?? {};
+    if (
+      (approvalPolicy && response.approvalPolicy !== approvalPolicy) ||
+      (approvalsReviewer && response.approvalsReviewer !== approvalsReviewer)
+    ) {
+      this.close();
+      throw Error("Codex did not accept the requested approval settings");
     }
   }
   async create() {
@@ -156,9 +164,19 @@ export class CodexAdapter {
       sandbox: "workspace-write",
       approvalPolicy: "on-request",
       approvalsReviewer: "user",
+      ...this.threadSettings(),
     });
-    this.verifyWorkspace(r);
+    this.verifyThread(r);
     this.ctx.update({ native: r.thread.id, state: "ready" });
+  }
+  threadSettings() {
+    const { model, approvalPolicy, approvalsReviewer } =
+      this.ctx.s.settings ?? {};
+    return {
+      ...(model && { model }),
+      ...(approvalPolicy && { approvalPolicy }),
+      ...(approvalsReviewer && { approvalsReviewer }),
+    };
   }
   async recover() {
     await this.connect();
@@ -170,8 +188,9 @@ export class CodexAdapter {
       threadId,
       excludeTurns: true,
       ...this.workspaceParams(),
+      ...this.threadSettings(),
     });
-    this.verifyWorkspace(r);
+    this.verifyThread(r);
     let cursor = null,
       active = null,
       lastTurn = null;
@@ -320,6 +339,9 @@ export class CodexAdapter {
     try {
       r = await this.call("turn/start", {
         threadId: this.ctx.s.native,
+        ...(this.ctx.s.settings?.effort && {
+          effort: this.ctx.s.settings.effort,
+        }),
         input: [{ type: "text", text: command.text }],
       });
     } finally {

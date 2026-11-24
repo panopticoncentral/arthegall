@@ -92,6 +92,26 @@ On upgrade, existing sessions and launch schedules gain a project for their runn
 
 Use `claude` as the harness name to start a Claude Code session. The history command prints JSON lines in follow mode. Ctrl-C stops the viewer. The session continues on its machine.
 
+### Session settings
+
+Use the same options with `launch` and `schedule create launch`. Each session keeps its choices across follow-ups and runner restarts. A scheduled launch applies its saved choices to every new session. See the requested values under `settings` in `arthegall sessions`.
+
+```sh
+arthegall launch PROJECT_ID codex "Review the changes" --model MODEL_ID --effort high --approval-policy on-request --approval-reviewer user
+arthegall launch PROJECT_ID claude "Review the changes" --model sonnet --effort high --permission-mode plan
+```
+
+| Option | Harness | Values and behavior |
+|---|---|---|
+| `--model` | Both | Model identifier accepted by the installed harness. Claude also accepts aliases such as `sonnet`. Omitting it uses the harness default. |
+| `--effort` | Both | Use a level supported by the selected model. Codex receives the level on each turn. Claude accepts `low`, `medium`, `high`, `xhigh`, or `max`. Omitting it uses the harness default. |
+| `--approval-policy` | Codex | When to request approval. Choose `untrusted`, `on-request` (default), or `never`. The session uses the workspace-write sandbox. |
+| `--approval-reviewer` | Codex | Route requests to the operator with `user` (default) or to Codex automatic review with `auto_review`. |
+| `--permission-mode` | Claude | Choose `manual`, `acceptEdits`, `plan`, `auto`, `dontAsk`, or `bypassPermissions`. Omitting it uses the harness configuration. |
+| `--permission-prompts` | Claude | `host` (default) routes outstanding requests to the operator. `none` denies actions that would prompt. |
+
+Model availability and managed permissions depend on the runner's harness. Configured launches wait for a runner with session settings support. Other sessions can continue while they wait.
+
 | Operation | Command |
 |---|---|
 | See session states, active turn IDs, and outstanding approval requests | `arthegall sessions` |
