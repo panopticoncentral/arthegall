@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -18,7 +19,10 @@ const sessionFlags = {
 const help = `arthegall serve [--dir DIR] [--listen ADDRESS] [--port PORT] [--name TLS_HOSTNAME]
                [--cert CERT --key PRIVATE_KEY]
 arthegall pair CODE
-arthegall runners | sessions [PROJECT]
+arthegall runners | sessions [PROJECT] [--agent AGENT_ID] | session show SESSION
+arthegall agent add NAME (--prompt TEXT | --prompt-file PATH)
+arthegall agent edit AGENT_ID [--name NAME] [--prompt TEXT | --prompt-file PATH]
+arthegall agent list | agent show AGENT_ID | agent archive AGENT_ID | agent restore AGENT_ID
 arthegall project add RUNNER NAME PRIMARY_PATH [ADDITIONAL_PATH ...]
 arthegall project edit PROJECT NAME PRIMARY_PATH [ADDITIONAL_PATH ...]
 arthegall project list | project archive PROJECT
@@ -36,12 +40,12 @@ arthegall schedule list | schedule history SCHEDULE
 TIMING: --in 5m | --at ISO_TIMESTAMP_WITH_OFFSET | --time HH:MM [--days weekdays|daily|mon,wed,...]
         [--zone America/Los_Angeles] [--missed latest|backfill (recurring only)]
 
-Session options for both harnesses: --model MODEL --effort LEVEL
+Session options for both harnesses: --agent AGENT_ID --model MODEL --effort LEVEL
 Codex: --approval-policy untrusted|on-request|never --approval-reviewer user|auto_review
 Claude: --permission-mode manual|acceptEdits|plan|auto|dontAsk|bypassPermissions
         --permission-prompts host|none
 
-Project, session and schedule actions accept --command-id UUID for retrying the same request.
+Agent, project, session and schedule actions accept --command-id UUID for retrying the same request.
 Operator commands use --dir DIR or ARTHEGALL_CONTROL_DIR to locate the local control plane.`;
 function request(dir, data) {
   return new Promise((resolve, reject) => {
@@ -86,6 +90,9 @@ try {
         "days",
         "zone",
         "missed",
+        "agent",
+        "prompt",
+        "prompt-file",
         ...Object.keys(sessionFlags),
       ]
         .map((k) => [k, { type: "string" }])
@@ -104,7 +111,7 @@ try {
     calendar[key] = o[key];
   }
   let target;
-  if (op === "project") op = "project-" + p.shift();
+  if (["agent", "project", "session"].includes(op)) op += "-" + p.shift();
   if (op === "schedule") {
     op = "schedule-" + p.shift();
     if (op === "schedule-create") {
@@ -130,12 +137,25 @@ try {
     !(op === "schedule-create" && target === "launch")
   )
     throw Error("session options require launch or schedule create launch");
+  if (
+    o.agent !== undefined &&
+    op !== "launch" &&
+    op !== "sessions" &&
+    !(op === "schedule-create" && target === "launch")
+  )
+    throw Error("--agent requires sessions, launch, or schedule create launch");
+  if (o.prompt !== undefined || o["prompt-file"] !== undefined) {
+    if (!["agent-add", "agent-edit"].includes(op))
+      throw Error("agent prompt requires agent add or edit");
+    if (o.prompt !== undefined && o["prompt-file"] !== undefined)
+      throw Error("choose --prompt or --prompt-file");
+  }
   if (!op || o.help || op === "help") console.log(help);
   else if (op === "serve") {
     if (!!o.cert !== !!o.key) throw Error("supply --cert and --key together");
     if (o["command-id"])
       throw Error(
-        "--command-id requires a project, session or schedule action",
+        "--command-id requires an agent, project, session or schedule action",
       );
     serve(dir, o);
   } else {
@@ -148,6 +168,13 @@ try {
       ? p.splice(3)
       : null;
     const forms = {
+      "agent-add": ["name"],
+      "agent-edit": ["id"],
+      "agent-show": ["id"],
+      "agent-list": [],
+      "agent-archive": ["id"],
+      "agent-restore": ["id"],
+      "session-show": ["id"],
       "project-list": [],
       "project-add": ["runner", "name", "cwd"],
       "project-edit": ["id", "name", "cwd"],
@@ -174,11 +201,19 @@ try {
     const keys = forms[op];
     if (!Array.isArray(keys) || keys.length !== p.length) throw Error(help);
     const args = Object.fromEntries(keys.map((k, i) => [k, p[i]]));
+    if (op === "agent-edit" && o.name !== undefined) args.name = o.name;
+    if (o.prompt !== undefined) args.prompt = o.prompt;
+    if (o["prompt-file"] !== undefined)
+      args.prompt = readFileSync(o["prompt-file"], "utf8");
+    if (o.agent !== undefined) args.agentId = o.agent;
     if (paths) args.additionalDirs = paths;
     if (configured) args.settings = settings;
     if (target) args.target = target;
     Object.assign(args, calendar);
     const action = ![
+      "agent-list",
+      "agent-show",
+      "session-show",
       "project-list",
       "schedule-list",
       "schedule-history",
@@ -190,7 +225,7 @@ try {
     ].includes(op);
     if (!action && o["command-id"] !== undefined)
       throw Error(
-        "--command-id requires a project, session or schedule action",
+        "--command-id requires an agent, project, session or schedule action",
       );
     if (action) args.commandId = o["command-id"] ?? randomUUID();
     if (o.after) args.after = Number(o.after);
@@ -207,24 +242,17 @@ try {
       }
     } else {
       try {
-        console.log(
-          JSON.stringify(
-            await request(
-              dir,
-              // Older servers must reject a configured launch instead of silently
-              // starting it with default permissions.
-              action
-                ? {
-                    op: configured ? "submit-configured-launch" : "submit",
-                    action: op,
-                    ...args,
-                  }
-                : { op, ...args },
-            ),
-            null,
-            2,
-          ),
-        );
+        // Older servers must reject launches that require newer capabilities.
+        let operation = op;
+        if (action) {
+          operation = configured ? "submit-configured-launch" : "submit";
+          if (o.agent !== undefined) operation = "submit-agent-launch";
+          args.action = op;
+        } else if (op === "sessions" && o.agent !== undefined) {
+          operation = "agent-sessions";
+        }
+        const result = await request(dir, { op: operation, ...args });
+        console.log(JSON.stringify(result, null, 2));
       } catch (error) {
         if (action) console.error("Command ID for retry:", args.commandId);
         throw error;

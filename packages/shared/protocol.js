@@ -13,9 +13,15 @@ export const protocolVersion = 1;
 export const replayFeature = "event-parts";
 export const projectPathsFeature = "project-paths";
 export const sessionSettingsFeature = "session-settings";
+export const agentFeature = "agent-instructions";
 export const protocolOffer = {
   protocolVersion,
-  features: [replayFeature, projectPathsFeature, sessionSettingsFeature],
+  features: [
+    replayFeature,
+    projectPathsFeature,
+    sessionSettingsFeature,
+    agentFeature,
+  ],
 };
 
 const text = (value) => typeof value === "string";
@@ -84,6 +90,8 @@ const harnesses = (value) =>
     (h) =>
       h &&
       id(h.name) &&
+      (h.agentInstructions === undefined ||
+        typeof h.agentInstructions === "boolean") &&
       ["available", "unavailable", "unknown"].includes(h.status),
   );
 const receiptStatuses = [
@@ -96,6 +104,13 @@ const receiptStatuses = [
 ];
 const commandFields = {
   launch: (c) =>
+    (c.agent === undefined ||
+      (c.agent &&
+        id(c.agent.id) &&
+        positive(c.agent.revision) &&
+        id(c.agent.name) &&
+        id(c.agent.prompt) &&
+        c.agent.prompt.trim().length > 0)) &&
     id(c.harness) &&
     id(c.cwd) &&
     text(c.text) &&

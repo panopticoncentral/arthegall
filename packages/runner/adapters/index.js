@@ -13,7 +13,7 @@ export function harnessRegistry(dir) {
     ],
     [
       "claude",
-      { probe: ClaudeAdapter.probe, create: (ctx) => new ClaudeAdapter(ctx) },
+      { probe: ClaudeAdapter.probe, create: (ctx) => new ClaudeAdapter(ctx, dir) },
     ],
   ]);
 }

@@ -1,4 +1,5 @@
 import { JsonTable, SQLiteState } from "@arthegall/shared/sqlite";
+import { Agents } from "./agents.js";
 import { Projects, migrateProjectMembership } from "./projects.js";
 
 function initialize(db, legacy) {
@@ -9,6 +10,7 @@ function initialize(db, legacy) {
     .get();
   db.exec(`
     CREATE TABLE IF NOT EXISTS runners (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE UNIQUE INDEX IF NOT EXISTS project_workspace ON projects(json_extract(value,'$.runner'),json_extract(value,'$.cwd'));
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -52,6 +54,7 @@ function initialize(db, legacy) {
 export class ControlStore extends SQLiteState {
   constructor(dir) {
     super(dir, "control plane", initialize);
+    this.agents = new Agents(this.db);
     this.projects = new Projects(this.db);
     this.schedules = new JsonTable(this.db, "schedules");
     this.requests = new JsonTable(this.db, "operator_requests");

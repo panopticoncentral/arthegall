@@ -180,12 +180,24 @@ test("paired runner journals model activity across a control-plane outage and re
   const extra = [join(root, "shared lib"), join(root, "client")];
   for (const path of extra) mkdirSync(path);
   const project = await command("project", "add", id, "Example", cwd, ...extra);
+  const promptFile = join(root, "reviewer.txt");
+  const prompt = "Review changes.\nPreserve indentation.\n";
+  writeFileSync(promptFile, prompt);
+  const agent = await command(
+    "agent",
+    "add",
+    "Reviewer",
+    "--prompt-file",
+    promptFile,
+  );
   const launchId = randomUUID();
   const launchArgs = [
     "launch",
     project.id,
     "claude",
     "Synthetic prompt",
+    "--agent",
+    agent.id,
     "--model",
     "sonnet",
     "--effort",
@@ -203,6 +215,25 @@ test("paired runner journals model activity across a control-plane outage and re
   ]);
   assert.deepEqual(duplicate, first);
   assert.equal(first.id, launchId);
+  await command(
+    "agent",
+    "edit",
+    agent.id,
+    "--name",
+    "Inspector",
+    "--prompt",
+    "New instructions",
+  );
+  await command("agent", "archive", agent.id);
+  assert.deepEqual(
+    (await command("sessions", project.id, "--agent", agent.id))[0].agent,
+    { id: agent.id, name: "Reviewer", revision: 1 },
+  );
+  assert.deepEqual(await command("sessions", "--agent", randomUUID()), []);
+  assert.equal(
+    (await command("session", "show", first.session)).agent.prompt,
+    prompt,
+  );
   assert.deepEqual(first.settings, {
     model: "sonnet",
     effort: "high",
@@ -262,6 +293,17 @@ test("paired runner journals model activity across a control-plane outage and re
     "--permission-mode": "manual",
     "--permission-prompts": "host",
   };
+  const checkAgent = () => {
+    const args = workerArgs();
+    assert.equal(
+      readFileSync(
+        args[args.indexOf("--append-system-prompt-file") + 1],
+        "utf8",
+      ),
+      prompt,
+    );
+  };
+  checkAgent();
   checkSettings(firstFlags);
   assert.ok(workerArgs().includes("--session-id"));
   assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), extra);
@@ -331,6 +373,7 @@ test("paired runner journals model activity across a control-plane outage and re
   });
   assert.equal(occurrence.session, first.session);
   checkSettings(firstFlags);
+  checkAgent();
   assert.ok(workerArgs().includes("--resume"));
   assert.deepEqual(JSON.parse(readFileSync(join(cwd, "started"))), extra);
   const followup = (await command("commands", first.session)).find(

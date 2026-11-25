@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 if (process.argv.includes("--version")) console.log("fixture");
 else if (process.argv.includes("--help"))
-  console.log("--replay-user-messages --input-format --permission-prompts");
+  console.log("--replay-user-messages --input-format --permission-prompts --append-system-prompt-file");
 else {
   const interruptReplay = process.env.FIXTURE_CLAUDE_INTERRUPT && JSON.parse(readFileSync(process.env.FIXTURE_CLAUDE_INTERRUPT,"utf8"));
   const print = (msg) => console.log(JSON.stringify(msg));

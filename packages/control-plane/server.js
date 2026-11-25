@@ -19,6 +19,7 @@ import {
   protocolOffer,
   projectPathsFeature,
   sessionSettingsFeature,
+  agentFeature,
   replayFeature,
   versionIssue,
   decodeRunnerMessage,
@@ -87,6 +88,7 @@ export function serve(dir, opt) {
       peer.sent,
       peer.projectPaths,
       peer.sessionSettings,
+      peer.agents,
     ))
       send(peer, { op: "command", command });
   }
@@ -114,6 +116,7 @@ export function serve(dir, opt) {
       features: [
         ...(peer.parts ? [replayFeature] : []),
         ...(peer.projectPaths ? [projectPathsFeature] : []),
+        ...(peer.agents ? [agentFeature] : []),
         ...(peer.sessionSettings ? [sessionSettingsFeature] : []),
       ],
       ...(peer.parts ? { replayPartBytes } : {}),
@@ -193,6 +196,7 @@ export function serve(dir, opt) {
           }
           peer.projectPaths =
             m.features?.includes(projectPathsFeature) === true;
+          peer.agents = m.features?.includes(agentFeature) === true;
           peer.sessionSettings =
             m.features?.includes(sessionSettingsFeature) === true;
           peer.parts =
@@ -329,15 +333,24 @@ export function serve(dir, opt) {
           };
         });
       else if (op === "project-list") result = store.projects.list();
-      else if (op === "sessions")
+      else if (op === "agent-list")
+        result = store.agents.list().map(({ prompt, ...summary }) => summary);
+      else if (op === "agent-show") result = store.agents.require(a.id);
+      else if (op === "session-show") result = control.session(a.id);
+      else if (op === "sessions" || op === "agent-sessions")
         result = store.sessions
           .list()
           .filter((s) => a.project === undefined || s.project === a.project)
-          .map((s) =>
-            s.closing && s.state !== "ended"
+          .filter((s) => a.agentId === undefined || s.agent?.id === a.agentId)
+          .map((s) => {
+            if (s.agent) {
+              const { prompt, ...summary } = s.agent;
+              s.agent = summary;
+            }
+            return s.closing && s.state !== "ended"
               ? { ...s, activity: s.state, state: "ending" }
-              : s,
-          );
+              : s;
+          });
       else if (op === "schedule-list") result = control.scheduler.list();
       else if (op === "schedule-history")
         result = control.scheduler.history(a.id);
@@ -348,7 +361,11 @@ export function serve(dir, opt) {
       else if (op === "history") {
         control.session(a.session);
         result = store.history(a.session, a.after ?? 0);
-      } else if (op === "submit" || op === "submit-configured-launch") {
+      } else if (
+        op === "submit" ||
+        op === "submit-configured-launch" ||
+        op === "submit-agent-launch"
+      ) {
         const { action, ...args } = a;
         if (!args.commandId) throw Error("submit requires a command ID");
         result = control.action(action, args);

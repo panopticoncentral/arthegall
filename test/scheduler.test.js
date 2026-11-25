@@ -532,3 +532,97 @@ test("configured launches and follow-ups wait for a runner that supports session
   assert.deepEqual(f.control.session(first.session).settings, settings);
   assert.equal(f.dispatch()[0].id, next.id);
 });
+
+test("scheduled launches capture the agent revision when a session is created", (t) => {
+  const f = fixture(t);
+  const act = (op, args) => f.control.action(op, args);
+  const agent = act("agent-add", { name: "Reviewer", prompt: "First" });
+  assert.throws(
+    () => act("agent-add", { name: "reviewer", prompt: "Different" }),
+    /active agent/,
+  );
+  assert.throws(
+    () => act("agent-edit", { id: agent.id, prompt: "  " }),
+    /empty agent prompt/,
+  );
+  const schedule = f.create({ ...launch, ...weekly, agentId: agent.id });
+  act("agent-edit", { id: agent.id, prompt: "Second" });
+  f.tick(monday);
+  f.restart();
+  const [first] = f.history(schedule.id);
+  const queued = f.control.command(first.command);
+  act("agent-archive", { id: agent.id });
+  assert.deepEqual(f.dispatch(), []);
+  assert.match(
+    f.control.command(queued.id).detail,
+    /agent instruction support/,
+  );
+  assert.deepEqual(f.control.dispatch("r", new Set(), true, true, true), []);
+  f.event(undefined, {
+    type: "inventory",
+    harnesses: [{ name: "codex", agentInstructions: true }],
+  });
+  const [sent] = f.control.dispatch("r", new Set(), true, true, true);
+  assert.deepEqual(sent.agent, {
+    id: agent.id,
+    name: "Reviewer",
+    revision: 2,
+    prompt: "Second",
+  });
+  assert.deepEqual(f.control.session(sent.session).agent, sent.agent);
+  f.event(sent.session, {
+    type: "receipt",
+    command: sent.id,
+    status: "failed",
+  });
+  f.tick(monday + day);
+  const failed = f
+    .history(schedule.id)
+    .find((o) => o.status === "failed" && !o.command);
+  assert.match(failed.detail, /archived: Reviewer/);
+  const other = act("agent-add", { name: "Reviewer", prompt: "Other" });
+  assert.throws(() => act("agent-restore", { id: agent.id }), /active agent/);
+  act("agent-archive", { id: other.id });
+  act("agent-restore", { id: agent.id });
+  f.tick(monday + day * 2);
+  assert.equal(
+    f.history(schedule.id).filter((o) => o.status === "queued").length,
+    1,
+  );
+});
+
+test("an offline launch retry preserves its original agent after rename and archive", (t) => {
+  const f = fixture(t);
+  const original = f.control.action("agent-add", {
+    name: "Reviewer",
+    prompt: "Original",
+  });
+  const args = { ...launch, agentId: original.id, commandId: randomUUID() };
+  const first = f.control.action("launch", args);
+  f.control.action("agent-edit", {
+    id: original.id,
+    name: "Editor",
+    prompt: "Updated",
+  });
+  f.control.action("agent-archive", { id: original.id });
+  f.restart();
+  assert.deepEqual(f.control.action("launch", args), first);
+  assert.deepEqual(f.control.session(first.session).agent, {
+    id: original.id,
+    name: "Reviewer",
+    revision: 1,
+    prompt: "Original",
+  });
+  assert.throws(
+    () => f.control.action("launch", { ...args, commandId: randomUUID() }),
+    /archived/,
+  );
+  const normal = f.control.action("launch", {
+    ...launch,
+    text: "Ordinary session",
+  });
+  assert.deepEqual(
+    f.dispatch().map((c) => c.id),
+    [normal.id],
+  );
+});

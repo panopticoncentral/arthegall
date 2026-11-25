@@ -218,7 +218,7 @@ test("Codex reapplies saved session choices on resume and effort on each turn", 
     approvalPolicy: "untrusted",
     approvalsReviewer: "auto_review",
   };
-  const s = { cwd: "/work", settings };
+  const s = { cwd: "/work", settings, agent: { prompt: "Review." } };
   const adapter = new CodexAdapter({
     s,
     update: (patch) => Object.assign(s, patch),
@@ -228,11 +228,14 @@ test("Codex reapplies saved session choices on resume and effort on each turn", 
   const methods = [];
   adapter.call = async (method, params) => {
     methods.push(method);
+    if (method === "config/read")
+      return { config: { developer_instructions: "Standing rules." } };
     if (method === "thread/turns/list") return { data: [], nextCursor: null };
     if (method === "turn/start") {
       assert.equal(params.effort, settings.effort);
       return { turn: { status: "completed" } };
     }
+    assert.equal(params.developerInstructions, "Standing rules.\n\nReview.");
     for (const key of ["model", "approvalPolicy", "approvalsReviewer"])
       assert.equal(params[key], settings[key]);
     if (method === "thread/start")
@@ -244,13 +247,16 @@ test("Codex reapplies saved session choices on resume and effort on each turn", 
   await adapter.recover();
   await adapter.input({ id: "next", text: "Continue" });
   assert.deepEqual(methods, [
+    "config/read",
     "thread/start",
     "turn/start",
+    "config/read",
     "thread/resume",
     "thread/turns/list",
     "turn/start",
   ]);
   adapter.call = async () => ({
+    config: {},
     thread: { id: "native" },
     approvalPolicy: "never",
   });

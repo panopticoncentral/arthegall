@@ -202,6 +202,7 @@ export class Runner {
         cwd: c.cwd,
         additionalDirs: c.additionalDirs ?? [],
         settings: c.settings,
+        agent: c.agent,
         state: "new",
         approvals: [],
         turn: null,

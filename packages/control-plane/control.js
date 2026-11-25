@@ -35,6 +35,12 @@ export class Control {
   }
   action(op, { commandId, ...args }) {
     return this.store.transaction(() => {
+      if (args.agentId !== undefined)
+        requireValue(
+          op === "launch" ||
+            (op === "schedule-create" && args.target === "launch"),
+          "agent selection requires a launch",
+        );
       if (args.settings !== undefined) {
         requireValue(
           op === "launch" ||
@@ -110,6 +116,10 @@ export class Control {
     return project;
   }
   apply(op, a, commandId) {
+    if (
+      ["agent-add", "agent-edit", "agent-archive", "agent-restore"].includes(op)
+    )
+      return this.store.agents.save(op, a);
     const projects = this.store.projects;
     if (op === "project-add") {
       requireValue(this.store.runners.get(a.runner), "unknown runner");
@@ -146,6 +156,9 @@ export class Control {
         cwd: project.cwd,
         additionalDirs: project.additionalDirs,
         ...(a.settings && { settings: a.settings }),
+        ...(a.agentId !== undefined && {
+          agent: this.store.agents.snapshot(a.agentId),
+        }),
         state: "new",
         closing: false,
       };
@@ -154,6 +167,7 @@ export class Control {
         s,
         "launch",
         {
+          ...(s.agent && { agent: s.agent }),
           text: a.text,
           project: s.project,
           cwd: s.cwd,
@@ -367,7 +381,9 @@ export class Control {
     sent,
     supportsProjectPaths = true,
     supportsSessionSettings = true,
+    supportsAgents = false,
   ) {
+    const harnesses = this.store.runners.get(runner)?.harnesses ?? [];
     const cmds = this.store.commands
       .list()
       .filter((c) => c.runner === runner && open.has(c.status));
@@ -402,7 +418,20 @@ export class Control {
       }
       if (isPromptCommand(c.type) || c.type === "steer") {
         let detail;
-        if (s.settings && !supportsSessionSettings)
+        if (
+          s.agent &&
+          !(
+            supportsAgents &&
+            harnesses.some(
+              (h) => h.name === s.harness && h.agentInstructions === true,
+            )
+          )
+        )
+          detail =
+            "Waiting for a runner and " +
+            s.harness +
+            " harness with agent instruction support";
+        else if (s.settings && !supportsSessionSettings)
           detail =
             "Update the runner to send input to sessions with explicit harness settings";
         else if (s.additionalDirs?.length && !supportsProjectPaths)

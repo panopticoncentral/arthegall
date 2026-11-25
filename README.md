@@ -92,6 +92,33 @@ On upgrade, existing sessions and launch schedules gain a project for their runn
 
 Use `claude` as the harness name to start a Claude Code session. The history command prints JSON lines in follow mode. Ctrl-C stops the viewer. The session continues on its machine.
 
+### Agents
+
+Define a named agent once on the control plane and select it when launching a session on any project or compatible runner.
+
+```sh
+arthegall agent add "Reviewer" --prompt "Lead with the most consequential finding."
+arthegall agent list
+arthegall launch PROJECT_ID codex "Review the latest changes" --agent AGENT_ID
+arthegall sessions --agent AGENT_ID
+arthegall session show SESSION_ID
+```
+
+Use `--prompt-file PATH` to read multiline instructions from a file on the operator's machine. The control plane saves the text, including its formatting. The name labels the session. The prompt supplies its standing instructions. The harness, model and permissions are selected separately at launch.
+
+| Operation | Command |
+|---|---|
+| Inspect the current name, revision and instructions | `arthegall agent show AGENT_ID` |
+| Change the prompt or name, or both | `arthegall agent edit AGENT_ID --prompt-file reviewer.md --name "Reviewer"` |
+| Archive or restore a definition | `arthegall agent archive AGENT_ID` or `arthegall agent restore AGENT_ID` |
+| Find this agent’s sessions in a project | `arthegall sessions PROJECT_ID --agent AGENT_ID` |
+
+Active names are unique ignoring case. Editing the name or prompt advances the revision. Each session saves its agent's ID, name, revision and instructions when the control plane accepts the launch. Queued launches, follow-ups and resumed sessions use that snapshot. Use `session show` to inspect it. Archived agents appear in `agent list` with their status and can still be used to find earlier sessions.
+
+A scheduled launch accepts the same `--agent` option. Each occurrence uses the agent revision current when its session is created, including during backfill. If the agent is archived, the occurrence records a failure and a later occurrence can run after restoration. A scheduled send uses its target session’s saved instructions.
+
+The runner inventory reports `agentInstructions` for each available harness. Input for an agent session waits for a compatible runner and harness. Inspect `arthegall commands SESSION_ID` for the reason.
+
 ### Session settings
 
 Use the same options with `launch` and `schedule create launch`. Each session keeps its choices across follow-ups and runner restarts. A scheduled launch applies its saved choices to every new session. See the requested values under `settings` in `arthegall sessions`.

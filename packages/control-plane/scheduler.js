@@ -26,8 +26,10 @@ export class Scheduler {
     let target;
     if (a.target === "launch") {
       const project = this.control.launchProject(a);
+      if (a.agentId !== undefined) this.store.agents.snapshot(a.agentId);
       target = {
         op: "launch",
+        ...(a.agentId !== undefined && { agentId: a.agentId }),
         project: project.id,
         harness: a.harness,
         ...(a.settings && { settings: a.settings }),

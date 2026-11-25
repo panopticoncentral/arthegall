@@ -164,15 +164,28 @@ export class CodexAdapter {
       sandbox: "workspace-write",
       approvalPolicy: "on-request",
       approvalsReviewer: "user",
-      ...this.threadSettings(),
+      ...(await this.threadSettings()),
     });
     this.verifyThread(r);
     this.ctx.update({ native: r.thread.id, state: "ready" });
   }
-  threadSettings() {
+  async threadSettings() {
     const { model, approvalPolicy, approvalsReviewer } =
       this.ctx.s.settings ?? {};
+    let developerInstructions;
+    if (this.ctx.s.agent) {
+      // This field overrides the configured text. Compose with the effective
+      // project configuration, never with the previous thread's combined text.
+      const { config } = await this.call("config/read", {
+        cwd: this.ctx.s.cwd,
+      });
+      const existing = config.developer_instructions;
+      developerInstructions = existing
+        ? existing + "\n\n" + this.ctx.s.agent.prompt
+        : this.ctx.s.agent.prompt;
+    }
     return {
+      ...(developerInstructions !== undefined && { developerInstructions }),
       ...(model && { model }),
       ...(approvalPolicy && { approvalPolicy }),
       ...(approvalsReviewer && { approvalsReviewer }),
@@ -188,7 +201,7 @@ export class CodexAdapter {
       threadId,
       excludeTurns: true,
       ...this.workspaceParams(),
-      ...this.threadSettings(),
+      ...(await this.threadSettings()),
     });
     this.verifyThread(r);
     let cursor = null,
